@@ -1,0 +1,26 @@
+# BrontoBox Requirements 🦕📦
+# Phase 1: Core Encryption System ✅
+# Phase 2: Google OAuth and Drive Integration ⬆️
+
+# Core Cryptography (Phase 1)
+cryptography>=41.0.0
+
+# Google API and OAuth (Phase 2)
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=1.0.0
+google-auth>=2.23.0
+
+# Development and Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Optional: For performance improvements
+pycryptodome>=3.18.0
+
+# Future phases will add:
+# selenium>=4.15.0                   # Account automation (Phase 3)
+# fastapi>=0.104.0                   # REST API server (Phase 4)
+# sqlalchemy>=2.0.0                  # Database ORM (Phase 4)
+# aiofiles>=23.2.0                   # Async file operations (Phase 4)
+# electron                           # Desktop UI (Phase 5)
