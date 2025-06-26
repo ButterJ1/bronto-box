@@ -1,72 +1,81 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
-    <meta name="description" content="🦕 BrontoBox - Secure Distributed Storage" />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <title>BrontoBox</title>
-    <style>
-      /* Prevent flash of unstyled content */
-      body {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-        margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="description" content="🦕 BrontoBox - Secure Distributed Storage" />
+  <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+  <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+  <title>BrontoBox</title>
+  <style>
+    /* Prevent flash of unstyled content */
+    body {
+      /* Warm cream - soft and elegant */
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fef3c7 100%);
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    #root {
+      min-height: 100vh;
+    }
+
+    /* Loading screen */
+    .initial-loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fef3c7 100%);
+      color: white;
+      z-index: 9999;
+    }
+
+    .loading-content {
+      text-align: center;
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top: 4px solid white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
       }
-      
-      #root {
-        min-height: 100vh;
+
+      100% {
+        transform: rotate(360deg);
       }
-      
-      /* Loading screen */
-      .initial-loading {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-        color: white;
-        z-index: 9999;
-      }
-      
-      .loading-content {
-        text-align: center;
-      }
-      
-      .loading-spinner {
-        width: 40px;
-        height: 40px;
-        border: 4px solid rgba(255,255,255,0.3);
-        border-top: 4px solid white;
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-        margin: 20px auto;
-      }
-      
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-    </style>
-  </head>
-  <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root">
-      <div class="initial-loading">
-        <div class="loading-content">
-          <div style="font-size: 4rem; margin-bottom: 1rem;">🦕</div>
-          <h1 style="font-size: 2rem; margin-bottom: 0.5rem;">BrontoBox</h1>
-          <p style="opacity: 0.8; margin-bottom: 1rem;">Loading secure storage...</p>
-          <div class="loading-spinner"></div>
-        </div>
+    }
+  </style>
+</head>
+
+<body>
+  <noscript>You need to enable JavaScript to run this app.</noscript>
+  <div id="root">
+    <div class="initial-loading">
+      <div class="loading-content">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">🦕</div>
+        <h1 style="font-size: 2rem; margin-bottom: 0.5rem;">BrontoBox</h1>
+        <p style="opacity: 0.8; margin-bottom: 1rem;">Loading secure storage...</p>
+        <div class="loading-spinner"></div>
       </div>
     </div>
-  </body>
+  </div>
+</body>
+
 </html>

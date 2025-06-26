@@ -2,7 +2,7 @@
 import React from 'react';
 import { Lock, RefreshCw, Settings, Shield } from 'lucide-react';
 
-const Header = ({ storageInfo, onVaultLock, onRefresh, refreshing }) => {
+const Header = ({ storageInfo, onVaultLock, onRefresh, refreshing, OnSettingsClick }) => {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg">
       <div className="flex items-center justify-between px-6 py-3">
@@ -44,6 +44,7 @@ const Header = ({ storageInfo, onVaultLock, onRefresh, refreshing }) => {
           </button>
           
           <button
+            onClick={OnSettingsClick}
             className="p-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
             title="Settings"
           >

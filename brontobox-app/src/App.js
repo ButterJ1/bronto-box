@@ -73,7 +73,7 @@ function App() {
   // Loading screen
   if (vaultStatus.loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-600 via-purple-600 to-pink-500 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-amber-100 via-amber-200 to-amber-200 flex items-center justify-center">
         <div className="text-center text-white">
           <div className="text-6xl mb-4">🦕</div>
           <h1 className="text-3xl font-bold mb-2">BrontoBox</h1>

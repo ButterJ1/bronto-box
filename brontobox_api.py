@@ -1,8 +1,8 @@
-# brontobox_api.py
+# brontobox_api.py - COMPLETE SECURE VERSION WITH UNIFIED FILE EXPERIENCE
 """
-BrontoBox FastAPI Server - COMPLETE VERSION WITH FIXES
+BrontoBox FastAPI Server - COMPLETE VERSION WITH SECURITY FIXES & AUTO-DISCOVERY
 REST API bridge between Python backend and Electron frontend
-Includes registry persistence and download fixes
+Includes proper vault authentication, data isolation, and file auto-discovery
 """
 
 import os
@@ -10,6 +10,7 @@ import json
 import asyncio
 import hashlib
 import base64
+import time
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
@@ -117,17 +118,111 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Registry persistence helpers
+# SECURE VAULT MANAGEMENT FUNCTIONS
+
+def get_vault_registry_path() -> str:
+    """Get path to vault registry file"""
+    return "brontobox_vault_registry.json"
+
+def save_vault_to_registry(vault_id: str, vault_data: Dict[str, Any]) -> bool:
+    """Save vault information to secure registry"""
+    try:
+        registry_path = get_vault_registry_path()
+        
+        # Load existing registry or create new
+        if os.path.exists(registry_path):
+            with open(registry_path, 'r') as f:
+                registry = json.load(f)
+        else:
+            registry = {"vaults": {}, "created_at": datetime.now().isoformat()}
+        
+        # Add/update vault
+        registry["vaults"][vault_id] = {
+            "vault_id": vault_id,
+            "salt": vault_data["salt"],
+            "verification_data": vault_data["verification_data"],
+            "created_at": vault_data.get("created_at", datetime.now().isoformat()),
+            "version": vault_data.get("version", "1.0"),
+            "last_accessed": datetime.now().isoformat()
+        }
+        
+        # Save registry
+        with open(registry_path, 'w') as f:
+            json.dump(registry, f, indent=2)
+            
+        print(f"✅ Vault {vault_id} saved to registry")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to save vault to registry: {e}")
+        return False
+
+def load_vault_from_registry(vault_id: str = None) -> Optional[Dict[str, Any]]:
+    """Load vault information from registry"""
+    try:
+        registry_path = get_vault_registry_path()
+        
+        if not os.path.exists(registry_path):
+            return None
+            
+        with open(registry_path, 'r') as f:
+            registry = json.load(f)
+        
+        vaults = registry.get("vaults", {})
+        
+        if vault_id:
+            return vaults.get(vault_id)
+        else:
+            # Return most recently accessed vault
+            if not vaults:
+                return None
+            
+            latest_vault = max(vaults.values(), 
+                             key=lambda v: v.get("last_accessed", ""))
+            return latest_vault
+            
+    except Exception as e:
+        print(f"❌ Failed to load vault from registry: {e}")
+        return None
+
+def list_vaults_from_registry() -> List[Dict[str, Any]]:
+    """List all registered vaults"""
+    try:
+        registry_path = get_vault_registry_path()
+        
+        if not os.path.exists(registry_path):
+            return []
+            
+        with open(registry_path, 'r') as f:
+            registry = json.load(f)
+        
+        return list(registry.get("vaults", {}).values())
+        
+    except Exception as e:
+        print(f"❌ Failed to list vaults: {e}")
+        return []
+
+def get_accounts_file_path(vault_id: str) -> str:
+    """Get account file path for specific vault"""
+    return f"brontobox_accounts_{vault_id}.json"
+
+def get_registry_file_path(vault_id: str) -> str:
+    """Get file registry path for specific vault"""
+    return f"brontobox_file_registry_{vault_id}.json"
+
+# Registry persistence helpers - updated for vault-specific storage
 def save_file_registry_to_disk():
     """Save file registry to disk for persistence"""
     try:
         storage_manager = app_state["storage_manager"]
-        if storage_manager and len(storage_manager.stored_files) > 0:
+        vault = app_state.get("vault")
+        
+        if storage_manager and vault and vault.vault_id and len(storage_manager.stored_files) > 0:
             encrypted_registry = storage_manager.save_file_registry()
-            registry_file = "brontobox_file_registry.json"
+            registry_file = get_registry_file_path(vault.vault_id)
             with open(registry_file, 'w') as f:
                 json.dump(encrypted_registry, f)
-            print(f"💾 File registry auto-saved ({len(storage_manager.stored_files)} files)")
+            print(f"💾 File registry auto-saved for vault {vault.vault_id} ({len(storage_manager.stored_files)} files)")
             return True
     except Exception as e:
         print(f"⚠️ Could not auto-save registry: {e}")
@@ -137,10 +232,12 @@ def load_file_registry_from_disk():
     """Load file registry from disk"""
     try:
         storage_manager = app_state["storage_manager"]
-        if not storage_manager:
+        vault = app_state.get("vault")
+        
+        if not storage_manager or not vault or not vault.vault_id:
             return False
             
-        registry_file = "brontobox_file_registry.json"
+        registry_file = get_registry_file_path(vault.vault_id)
         if os.path.exists(registry_file):
             with open(registry_file, 'r') as f:
                 encrypted_registry = json.load(f)
@@ -148,7 +245,7 @@ def load_file_registry_from_disk():
             success = storage_manager.load_file_registry(encrypted_registry)
             if success:
                 files_loaded = len(storage_manager.stored_files)
-                print(f"📂 Auto-loaded {files_loaded} files from registry")
+                print(f"📂 Auto-loaded {files_loaded} files from registry for vault {vault.vault_id}")
                 return True
     except Exception as e:
         print(f"⚠️ Could not auto-load registry: {e}")
@@ -164,6 +261,8 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "vault_unlocked": app_state["vault_unlocked"],
+        "security": "enhanced",
+        "features": ["unified_file_experience", "auto_discovery"],
         "timestamp": datetime.now().isoformat()
     }
 
@@ -187,7 +286,7 @@ async def health_check():
 
 @app.post("/vault/initialize")
 async def initialize_vault(request: VaultInitRequest):
-    """Initialize a new BrontoBox vault"""
+    """Initialize a new BrontoBox vault with secure verification"""
     try:
         # Initialize vault
         vault = VaultCore()
@@ -196,7 +295,7 @@ async def initialize_vault(request: VaultInitRequest):
         # Initialize auth manager
         auth_manager = GoogleAuthManager(vault)
         
-        # Initialize storage manager (even with no accounts)
+        # Initialize storage manager
         storage_manager = BrontoBoxStorageManager(vault, auth_manager)
         
         # Store in global state
@@ -205,10 +304,17 @@ async def initialize_vault(request: VaultInitRequest):
         app_state["storage_manager"] = storage_manager
         app_state["vault_unlocked"] = True
         
-        # Save vault info for persistence
-        vault_info_file = "brontobox_vault_info.json"
-        with open(vault_info_file, 'w') as f:
-            json.dump(init_data, f)
+        # SECURE: Save vault to registry with verification data
+        vault_data = {
+            "vault_id": init_data["vault_id"],
+            "salt": init_data["salt"],
+            "verification_data": init_data["verification_data"],
+            "created_at": datetime.now().isoformat(),
+            "version": init_data.get("version", "1.0")
+        }
+        
+        if not save_vault_to_registry(init_data["vault_id"], vault_data):
+            raise HTTPException(status_code=500, detail="Failed to save vault securely")
         
         await manager.broadcast({
             "type": "vault_initialized",
@@ -218,8 +324,9 @@ async def initialize_vault(request: VaultInitRequest):
         return {
             "success": True,
             "message": "Vault initialized successfully",
+            "vault_id": init_data["vault_id"],
             "salt": init_data["salt"],
-            "vault_info": init_data
+            "security_notice": "Vault secured with password verification"
         }
         
     except Exception as e:
@@ -227,11 +334,29 @@ async def initialize_vault(request: VaultInitRequest):
 
 @app.post("/vault/unlock")
 async def unlock_vault(request: VaultUnlockRequest):
-    """Unlock existing vault"""
+    """Unlock existing vault with SECURE verification"""
     try:
+        # Try to find vault by salt (since user only provides salt, not vault_id)
+        all_vaults = list_vaults_from_registry()
+        matching_vault = None
+        
+        for vault_info in all_vaults:
+            if vault_info["salt"] == request.salt:
+                matching_vault = vault_info
+                break
+        
+        if not matching_vault:
+            raise HTTPException(status_code=404, detail="No vault found with this salt")
+        
         # Initialize vault
         vault = VaultCore()
-        success = vault.unlock_vault(request.master_password, request.salt)
+        
+        # SECURE: Unlock with verification data
+        success = vault.unlock_vault(
+            request.master_password, 
+            request.salt,
+            matching_vault["verification_data"]
+        )
         
         if not success:
             raise HTTPException(status_code=401, detail="Invalid master password or salt")
@@ -239,15 +364,15 @@ async def unlock_vault(request: VaultUnlockRequest):
         # Initialize auth manager
         auth_manager = GoogleAuthManager(vault)
         
-        # Try to load existing accounts
-        accounts_file = "brontobox_accounts.json"
+        # Try to load existing accounts for this specific vault
+        accounts_file = get_accounts_file_path(matching_vault["vault_id"])
         if os.path.exists(accounts_file):
             try:
                 with open(accounts_file, 'r') as f:
                     encrypted_accounts = json.load(f)
                 success = auth_manager.load_accounts_from_vault(encrypted_accounts)
                 if not success:
-                    print("Warning: Could not load accounts - they may have been saved with different vault key")
+                    print("Warning: Could not load accounts - vault keys may be different")
             except Exception as e:
                 print(f"Warning: Could not load accounts: {e}")
                 # Remove corrupted accounts file
@@ -266,8 +391,30 @@ async def unlock_vault(request: VaultUnlockRequest):
         app_state["storage_manager"] = storage_manager
         app_state["vault_unlocked"] = True
         
-        # Auto-load file registry
-        load_file_registry_from_disk()
+        # Auto-load file registry for this vault
+        registry_file = get_registry_file_path(matching_vault["vault_id"])
+        if os.path.exists(registry_file):
+            try:
+                with open(registry_file, 'r') as f:
+                    encrypted_registry = json.load(f)
+                storage_manager.load_file_registry(encrypted_registry)
+            except Exception as e:
+                print(f"Warning: Could not load file registry: {e}")
+        
+        # 🔍 TRIGGER AUTO-DISCOVERY after vault unlock
+        if len(auth_manager.accounts) > 0:
+            print(f"🔍 Triggering file discovery for {len(auth_manager.accounts)} accounts...")
+            old_count = len(storage_manager.stored_files)
+            storage_manager.refresh_file_discovery()
+            new_count = len(storage_manager.stored_files)
+            discovered = new_count - old_count
+            
+            if discovered > 0:
+                print(f"🎉 Discovered {discovered} existing files across accounts!")
+        
+        # Update last accessed time
+        matching_vault["last_accessed"] = datetime.now().isoformat()
+        save_vault_to_registry(matching_vault["vault_id"], matching_vault)
         
         await manager.broadcast({
             "type": "vault_unlocked",
@@ -277,8 +424,10 @@ async def unlock_vault(request: VaultUnlockRequest):
         return {
             "success": True,
             "message": "Vault unlocked successfully",
+            "vault_id": matching_vault["vault_id"],
             "accounts_loaded": len(auth_manager.accounts),
-            "files_loaded": len(storage_manager.stored_files)
+            "files_loaded": len(storage_manager.stored_files),
+            "files_discovered": discovered if 'discovered' in locals() else 0
         }
         
     except HTTPException:
@@ -290,11 +439,40 @@ async def unlock_vault(request: VaultUnlockRequest):
 async def lock_vault():
     """Lock the vault"""
     try:
-        # Save registry before locking
-        save_file_registry_to_disk()
+        vault = app_state.get("vault")
+        if not vault:
+            return {"success": True, "message": "No vault to lock"}
         
-        if app_state["vault"]:
-            app_state["vault"].lock_vault()
+        vault_id = vault.vault_id
+        
+        # Save data before locking
+        if vault_id:
+            # Save accounts for this vault
+            auth_manager = app_state.get("auth_manager")
+            if auth_manager and len(auth_manager.accounts) > 0:
+                try:
+                    encrypted_accounts = auth_manager.save_accounts_to_vault()
+                    accounts_file = get_accounts_file_path(vault_id)
+                    with open(accounts_file, 'w') as f:
+                        json.dump(encrypted_accounts, f)
+                    print(f"💾 Accounts saved for vault {vault_id}")
+                except Exception as e:
+                    print(f"⚠️ Could not save accounts: {e}")
+            
+            # Save file registry for this vault
+            storage_manager = app_state.get("storage_manager")
+            if storage_manager and len(storage_manager.stored_files) > 0:
+                try:
+                    encrypted_registry = storage_manager.save_file_registry()
+                    registry_file = get_registry_file_path(vault_id)
+                    with open(registry_file, 'w') as f:
+                        json.dump(encrypted_registry, f)
+                    print(f"💾 File registry saved for vault {vault_id}")
+                except Exception as e:
+                    print(f"⚠️ Could not save file registry: {e}")
+        
+        # Lock vault
+        vault.lock_vault()
         
         # Clear global state
         app_state["vault"] = None
@@ -311,6 +489,32 @@ async def lock_vault():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to lock vault: {str(e)}")
+
+@app.get("/vault/list")
+async def list_vaults():
+    """List all registered vaults (for debugging/admin)"""
+    try:
+        vaults = list_vaults_from_registry()
+        
+        # Remove sensitive data from response
+        safe_vaults = []
+        for vault in vaults:
+            safe_vaults.append({
+                "vault_id": vault["vault_id"],
+                "created_at": vault.get("created_at"),
+                "last_accessed": vault.get("last_accessed"),
+                "version": vault.get("version"),
+                "has_verification": "verification_data" in vault
+            })
+        
+        return {
+            "success": True,
+            "vaults": safe_vaults,
+            "total_vaults": len(safe_vaults)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list vaults: {str(e)}")
 
 @app.get("/vault/status")
 async def get_vault_status():
@@ -332,6 +536,7 @@ async def get_vault_status():
     
     return {
         "unlocked": app_state["vault_unlocked"],
+        "vault_id": vault.vault_id if vault else None,
         "accounts_configured": accounts_count,
         "files_stored": files_count,
         "vault_status": vault.get_vault_status() if vault else None
@@ -363,12 +568,14 @@ async def setup_oauth(credentials_file: str = "credentials.json"):
 
 @app.post("/accounts/authenticate")
 async def authenticate_account(request: AccountAuthRequest):
-    """Authenticate a new Google account"""
+    """Authenticate a new Google account and trigger file discovery"""
     if not app_state["vault_unlocked"]:
         raise HTTPException(status_code=401, detail="Vault must be unlocked first")
     
     try:
         auth_manager = app_state["auth_manager"]
+        vault = app_state["vault"]
+        storage_manager = app_state["storage_manager"]
         
         # Setup OAuth if not already done
         if not auth_manager.client_config:
@@ -377,11 +584,24 @@ async def authenticate_account(request: AccountAuthRequest):
         # Authenticate account
         account_id = auth_manager.authenticate_new_account(request.account_name)
         
-        # Save accounts
-        encrypted_accounts = auth_manager.save_accounts_to_vault()
-        accounts_file = "brontobox_accounts.json"
-        with open(accounts_file, 'w') as f:
-            json.dump(encrypted_accounts, f)
+        # Save accounts to vault-specific file
+        if vault and vault.vault_id:
+            encrypted_accounts = auth_manager.save_accounts_to_vault()
+            accounts_file = get_accounts_file_path(vault.vault_id)
+            with open(accounts_file, 'w') as f:
+                json.dump(encrypted_accounts, f)
+        
+        # 🔍 TRIGGER AUTO-DISCOVERY for new account
+        discovered = 0
+        if storage_manager:
+            print(f"🔍 Triggering file discovery for new account: {account_id}")
+            old_count = len(storage_manager.stored_files)
+            storage_manager.refresh_file_discovery()
+            new_count = len(storage_manager.stored_files)
+            discovered = new_count - old_count
+            
+            if discovered > 0:
+                print(f"🎉 Discovered {discovered} existing files in new account!")
         
         # Get account info
         accounts = auth_manager.list_accounts()
@@ -389,14 +609,18 @@ async def authenticate_account(request: AccountAuthRequest):
         
         await manager.broadcast({
             "type": "account_added",
-            "data": {"account": new_account}
+            "data": {
+                "account": new_account,
+                "files_discovered": discovered
+            }
         })
         
         return {
             "success": True,
             "message": "Account authenticated successfully",
             "account_id": account_id,
-            "account": new_account
+            "account": new_account,
+            "files_discovered": discovered
         }
         
     except Exception as e:
@@ -487,7 +711,7 @@ async def get_storage_info():
             accounts=[]
         )
 
-# File Management Endpoints
+# File Management Endpoints - UPDATED FOR UNIFIED EXPERIENCE
 
 @app.post("/files/upload", response_model=FileUploadResponse)
 async def upload_file(file: UploadFile = File(...), metadata: str = "{}"):
@@ -550,26 +774,32 @@ async def upload_file(file: UploadFile = File(...), metadata: str = "{}"):
 
 @app.get("/files/list")
 async def list_files():
-    """List all stored files"""
+    """
+    📋 ENHANCED: List all BrontoBox files (auto-discovered + uploaded)
+    Now shows unified view across all accounts with original filenames
+    """
     if not app_state["vault_unlocked"]:
         raise HTTPException(status_code=401, detail="Vault must be unlocked first")
     
     try:
         storage_manager = app_state["storage_manager"]
         if not storage_manager:
-            # Return empty list if storage manager not initialized
             return {
                 "success": True,
                 "files": [],
-                "total_files": 0
+                "total_files": 0,
+                "message": "Storage manager not initialized"
             }
         
-        files = storage_manager.list_stored_files()
+        # Get unified BrontoBox files (includes auto-discovered ones)
+        files = storage_manager.get_unified_brontobox_files()
         
         return {
             "success": True,
             "files": files,
-            "total_files": len(files)
+            "total_files": len(files),
+            "auto_discovered": sum(1 for f in files if f.get('is_discovered', False)),
+            "user_uploaded": sum(1 for f in files if not f.get('is_discovered', False))
         }
         
     except Exception as e:
@@ -578,12 +808,108 @@ async def list_files():
             "success": True,
             "files": [],
             "total_files": 0,
-            "note": f"No files found (storage may not be configured): {str(e)}"
+            "error": str(e),
+            "note": "Could not load files - this may be normal for new vaults"
         }
+
+@app.post("/files/refresh-discovery")
+async def refresh_file_discovery():
+    """
+    🔄 NEW ENDPOINT: Manually refresh file discovery across all accounts
+    Useful when user wants to refresh the file list
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        # Refresh discovery
+        old_count = len(storage_manager.stored_files)
+        storage_manager.refresh_file_discovery()
+        new_count = len(storage_manager.stored_files)
+        
+        await manager.broadcast({
+            "type": "files_refreshed",
+            "data": {
+                "old_count": old_count,
+                "new_count": new_count,
+                "discovered": new_count - old_count
+            }
+        })
+        
+        return {
+            "success": True,
+            "message": "File discovery refreshed",
+            "files_before": old_count,
+            "files_after": new_count,
+            "newly_discovered": max(0, new_count - old_count)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh discovery: {str(e)}")
+
+@app.get("/files/statistics")
+async def get_file_statistics():
+    """
+    📊 NEW ENDPOINT: Get detailed file statistics
+    Shows breakdown of discovered vs uploaded files
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        files = storage_manager.get_unified_brontobox_files()
+        
+        # Calculate statistics
+        total_files = len(files)
+        discovered_files = [f for f in files if f.get('is_discovered', False)]
+        uploaded_files = [f for f in files if not f.get('is_discovered', False)]
+        
+        total_size = sum(f['size_bytes'] for f in files)
+        discovered_size = sum(f['size_bytes'] for f in discovered_files)
+        uploaded_size = sum(f['size_bytes'] for f in uploaded_files)
+        
+        # Account distribution
+        account_usage = {}
+        for file_info in files:
+            for account_id in file_info.get('accounts_used', []):
+                if account_id not in account_usage:
+                    account_usage[account_id] = {'files': 0, 'size_bytes': 0}
+                account_usage[account_id]['files'] += 1
+                account_usage[account_id]['size_bytes'] += file_info['size_bytes']
+        
+        return {
+            "success": True,
+            "statistics": {
+                "total_files": total_files,
+                "discovered_files": len(discovered_files),
+                "uploaded_files": len(uploaded_files),
+                "total_size_bytes": total_size,
+                "total_size_gb": round(total_size / (1024**3), 2),
+                "discovered_size_bytes": discovered_size,
+                "uploaded_size_bytes": uploaded_size,
+                "account_distribution": account_usage,
+                "accounts_used": len(account_usage)
+            },
+            "message": f"Found {total_files} BrontoBox files across {len(account_usage)} accounts"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get statistics: {str(e)}")
 
 @app.get("/files/{file_id}/download")
 async def download_file(file_id: str):
-    """Download and decrypt a file"""
+    """
+    ⬇️ ENHANCED: Download original decrypted file
+    Now works for both uploaded and auto-discovered files
+    """
     if not app_state["vault_unlocked"]:
         raise HTTPException(status_code=401, detail="Vault must be unlocked first")
     
@@ -603,18 +929,23 @@ async def download_file(file_id: str):
         temp_dir = tempfile.mkdtemp()
         output_path = os.path.join(temp_dir, file_info['name'])
         
-        # Retrieve file
+        # Retrieve file (handles both regular and discovered files)
         success = storage_manager.retrieve_file(file_id, output_path)
         
         if not success:
             shutil.rmtree(temp_dir)
             raise HTTPException(status_code=500, detail="Failed to retrieve file")
         
+        # Special handling for discovered files
+        if file_info.get('is_discovered'):
+            print(f"⚠️ Downloaded discovered file - may need manual verification")
+        
         await manager.broadcast({
             "type": "file_downloaded",
             "data": {
                 "file_id": file_id,
-                "filename": file_info['name']
+                "filename": file_info['name'],
+                "is_discovered": file_info.get('is_discovered', False)
             }
         })
         
@@ -673,6 +1004,82 @@ async def delete_file(file_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+
+# Updated Drive Management Endpoints - NOW SHOWS BRONTOBOX FILES
+
+@app.get("/drive/brontobox-files/{account_id}")
+async def list_brontobox_files_for_account(account_id: str):
+    """
+    📁 ENHANCED: List BrontoBox files for specific account
+    Shows original filenames, not encrypted chunk names
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        # Get all BrontoBox files
+        all_files = storage_manager.get_unified_brontobox_files()
+        
+        # Filter files that use this account
+        account_files = []
+        for file_info in all_files:
+            accounts_used = file_info.get('accounts_used', [])
+            if account_id in accounts_used:
+                # Add account-specific info
+                file_copy = file_info.copy()
+                file_copy['account_id'] = account_id
+                file_copy['chunks_in_account'] = sum(
+                    1 for chunk in storage_manager.stored_files[file_info['file_id']].chunks
+                    if chunk['drive_account'] == account_id
+                )
+                account_files.append(file_copy)
+        
+        return {
+            "success": True,
+            "account_id": account_id,
+            "files": account_files,
+            "total_files": len(account_files),
+            "view_type": "brontobox_files"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list BrontoBox files: {str(e)}")
+
+@app.get("/drive/raw-chunks/{account_id}")
+async def list_raw_chunks(account_id: str):
+    """
+    🔧 TECHNICAL VIEW: List raw encrypted chunks (for advanced users)
+    This shows the actual encrypted files stored in Google Drive
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        drive_client = storage_manager.drive_client
+        
+        # List raw chunks
+        chunks = drive_client.list_chunks(account_id=account_id)
+        chunks_data = [chunk.to_dict() for chunk in chunks]
+        
+        return {
+            "success": True,
+            "account_id": account_id,
+            "chunks": chunks_data,
+            "total_chunks": len(chunks_data),
+            "view_type": "raw_chunks",
+            "warning": "These are encrypted chunks - use BrontoBox files view for normal operation"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list raw chunks: {str(e)}")
 
 @app.get("/drive/chunks/{account_id}")
 async def list_drive_chunks(
@@ -911,6 +1318,8 @@ async def refresh_account_tokens():
     
     try:
         auth_manager = app_state["auth_manager"]
+        vault = app_state["vault"]
+        
         if not auth_manager:
             raise HTTPException(status_code=500, detail="Auth manager not initialized")
         
@@ -929,10 +1338,10 @@ async def refresh_account_tokens():
                 print(f"Failed to refresh {account_id}: {e}")
                 failed_accounts.append(account_id)
         
-        # Save updated accounts
-        if refreshed_accounts:
+        # Save updated accounts to vault-specific file
+        if refreshed_accounts and vault and vault.vault_id:
             encrypted_accounts = auth_manager.save_accounts_to_vault()
-            accounts_file = "brontobox_accounts.json"
+            accounts_file = get_accounts_file_path(vault.vault_id)
             with open(accounts_file, 'w') as f:
                 json.dump(encrypted_accounts, f)
         
@@ -951,9 +1360,12 @@ async def refresh_account_tokens():
 async def get_account_persistence_status():
     """Check if accounts are properly persisted and will survive vault lock/unlock"""
     try:
-        vault_info_exists = os.path.exists("brontobox_vault_info.json")
-        accounts_file_exists = os.path.exists("brontobox_accounts.json")
-        registry_file_exists = os.path.exists("brontobox_file_registry.json")
+        vault = app_state.get("vault")
+        vault_id = vault.vault_id if vault else None
+        
+        vault_registry_exists = os.path.exists(get_vault_registry_path())
+        accounts_file_exists = os.path.exists(get_accounts_file_path(vault_id)) if vault_id else False
+        registry_file_exists = os.path.exists(get_registry_file_path(vault_id)) if vault_id else False
         
         vault_unlocked = app_state["vault_unlocked"]
         accounts_loaded = len(app_state["auth_manager"].accounts) if app_state["auth_manager"] else 0
@@ -962,15 +1374,16 @@ async def get_account_persistence_status():
         return {
             "success": True,
             "persistence_status": {
-                "vault_info_saved": vault_info_exists,
+                "vault_registry_saved": vault_registry_exists,
                 "accounts_saved": accounts_file_exists,
                 "file_registry_saved": registry_file_exists,
                 "vault_currently_unlocked": vault_unlocked,
+                "current_vault_id": vault_id,
                 "accounts_loaded": accounts_loaded,
                 "files_loaded": files_loaded
             },
-            "ready_for_lock_unlock": vault_info_exists and accounts_file_exists,
-            "message": "All components properly persisted" if (vault_info_exists and accounts_file_exists) else "Some components not persisted"
+            "ready_for_lock_unlock": vault_registry_exists and accounts_file_exists,
+            "message": "All components properly persisted" if (vault_registry_exists and accounts_file_exists) else "Some components not persisted"
         }
         
     except Exception as e:
@@ -1038,6 +1451,326 @@ async def load_file_registry():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load registry: {str(e)}")
 
+# Data Management Endpoints
+
+@app.get("/data/export-registry")
+async def export_file_registry():
+    """
+    📤 Export encrypted file registry for backup
+    Returns downloadable file with all file metadata
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        vault = app_state["vault"]
+        
+        if not storage_manager or not vault:
+            raise HTTPException(status_code=500, detail="Storage manager or vault not initialized")
+        
+        # Get encrypted registry
+        encrypted_registry = storage_manager.save_file_registry()
+        
+        # Create export data with metadata
+        export_data = {
+            "export_type": "brontobox_file_registry",
+            "vault_id": vault.vault_id,
+            "exported_at": datetime.now().isoformat(),
+            "brontobox_version": "1.0.0",
+            "total_files": len(storage_manager.stored_files),
+            "encrypted_registry": encrypted_registry
+        }
+        
+        # Create temporary file for download
+        temp_dir = tempfile.mkdtemp()
+        filename = f"brontobox_file_registry_{vault.vault_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        file_path = os.path.join(temp_dir, filename)
+        
+        with open(file_path, 'w') as f:
+            json.dump(export_data, f, indent=2)
+        
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/json'
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export registry: {str(e)}")
+
+@app.get("/data/backup-vault-info")
+async def backup_vault_info():
+    """
+    🔑 Export vault information for backup (NO PRIVATE KEYS)
+    Returns vault metadata and salt for vault recovery
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        vault = app_state["vault"]
+        if not vault:
+            raise HTTPException(status_code=500, detail="Vault not initialized")
+        
+        # Load vault from registry
+        vault_info = load_vault_from_registry(vault.vault_id)
+        
+        if not vault_info:
+            raise HTTPException(status_code=404, detail="Vault information not found")
+        
+        # Create backup data (SAFE - no private keys)
+        backup_data = {
+            "backup_type": "brontobox_vault_info",
+            "vault_id": vault.vault_id,
+            "salt": vault_info["salt"],
+            "verification_data": vault_info["verification_data"],
+            "created_at": vault_info.get("created_at"),
+            "version": vault_info.get("version", "1.0"),
+            "exported_at": datetime.now().isoformat(),
+            "brontobox_version": "1.0.0",
+            "instructions": "Keep this file safe! You need the salt and your master password to unlock your vault.",
+            "warning": "This file does NOT contain your master password or private keys."
+        }
+        
+        # Create temporary file for download
+        temp_dir = tempfile.mkdtemp()
+        filename = f"brontobox_vault_backup_{vault.vault_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        file_path = os.path.join(temp_dir, filename)
+        
+        with open(file_path, 'w') as f:
+            json.dump(backup_data, f, indent=2)
+        
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/json'
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to backup vault info: {str(e)}")
+
+@app.post("/data/clear-all")
+async def clear_all_data():
+    """
+    🗑️ DANGER: Clear all BrontoBox data
+    Removes all files from Google Drive, deletes accounts, and clears vault
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        vault = app_state["vault"]
+        
+        if not storage_manager or not vault:
+            raise HTTPException(status_code=500, detail="Storage manager or vault not initialized")
+        
+        vault_id = vault.vault_id
+        deletion_results = {
+            "vault_id": vault_id,
+            "files_deleted": 0,
+            "accounts_cleared": 0,
+            "files_failed": 0,
+            "errors": []
+        }
+        
+        # Step 1: Delete all files from Google Drive
+        print(f"🗑️ Starting complete data deletion for vault {vault_id}")
+        
+        for file_id, stored_file in storage_manager.stored_files.items():
+            try:
+                print(f"🗑️ Deleting file: {stored_file.original_name}")
+                success = storage_manager.delete_file(file_id)
+                if success:
+                    deletion_results["files_deleted"] += 1
+                else:
+                    deletion_results["files_failed"] += 1
+                    deletion_results["errors"].append(f"Failed to delete file: {stored_file.original_name}")
+            except Exception as e:
+                deletion_results["files_failed"] += 1
+                deletion_results["errors"].append(f"Error deleting {stored_file.original_name}: {str(e)}")
+        
+        # Step 2: Clear account data
+        auth_manager = app_state["auth_manager"]
+        if auth_manager:
+            deletion_results["accounts_cleared"] = len(auth_manager.accounts)
+            auth_manager.accounts.clear()
+        
+        # Step 3: Remove vault-specific files
+        try:
+            accounts_file = get_accounts_file_path(vault_id)
+            registry_file = get_registry_file_path(vault_id)
+            
+            if os.path.exists(accounts_file):
+                os.remove(accounts_file)
+                print(f"🗑️ Removed accounts file: {accounts_file}")
+            
+            if os.path.exists(registry_file):
+                os.remove(registry_file)
+                print(f"🗑️ Removed registry file: {registry_file}")
+                
+        except Exception as e:
+            deletion_results["errors"].append(f"Error removing vault files: {str(e)}")
+        
+        # Step 4: Remove vault from registry
+        try:
+            registry_path = get_vault_registry_path()
+            if os.path.exists(registry_path):
+                with open(registry_path, 'r') as f:
+                    registry = json.load(f)
+                
+                if vault_id in registry.get("vaults", {}):
+                    del registry["vaults"][vault_id]
+                    
+                    with open(registry_path, 'w') as f:
+                        json.dump(registry, f, indent=2)
+                    
+                    print(f"🗑️ Removed vault {vault_id} from registry")
+                    
+        except Exception as e:
+            deletion_results["errors"].append(f"Error updating vault registry: {str(e)}")
+        
+        # Step 5: Lock vault and clear app state
+        vault.lock_vault()
+        app_state["vault"] = None
+        app_state["auth_manager"] = None
+        app_state["storage_manager"] = None
+        app_state["vault_unlocked"] = False
+        
+        print(f"✅ Data deletion complete: {deletion_results['files_deleted']} files deleted, {deletion_results['accounts_cleared']} accounts cleared")
+        
+        await manager.broadcast({
+            "type": "data_cleared",
+            "data": deletion_results
+        })
+        
+        return {
+            "success": True,
+            "message": "All data cleared successfully",
+            "deletion_results": deletion_results,
+            "note": "Vault has been locked. You will need to unlock or create a new vault."
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear data: {str(e)}")
+
+@app.post("/data/import-registry")
+async def import_file_registry(file: UploadFile = File(...)):
+    """
+    📥 Import file registry from backup
+    Restores file metadata from exported registry file
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        vault = app_state["vault"]
+        
+        if not storage_manager or not vault:
+            raise HTTPException(status_code=500, detail="Storage manager or vault not initialized")
+        
+        # Read uploaded file
+        content = await file.read()
+        import_data = json.loads(content.decode('utf-8'))
+        
+        # Validate import data
+        if import_data.get("export_type") != "brontobox_file_registry":
+            raise HTTPException(status_code=400, detail="Invalid registry file format")
+        
+        # Check if vault ID matches (optional - could be from different vault)
+        imported_vault_id = import_data.get("vault_id")
+        current_vault_id = vault.vault_id
+        
+        if imported_vault_id != current_vault_id:
+            print(f"⚠️ Warning: Importing registry from different vault ({imported_vault_id} → {current_vault_id})")
+        
+        # Load the encrypted registry
+        encrypted_registry = import_data["encrypted_registry"]
+        success = storage_manager.load_file_registry(encrypted_registry)
+        
+        if success:
+            files_imported = len(storage_manager.stored_files)
+            
+            # Auto-save the imported registry
+            save_file_registry_to_disk()
+            
+            return {
+                "success": True,
+                "message": "File registry imported successfully",
+                "files_imported": files_imported,
+                "imported_from_vault": imported_vault_id,
+                "imported_at": import_data.get("exported_at")
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Failed to decrypt imported registry - may be from incompatible vault")
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON file")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to import registry: {str(e)}")
+
+@app.get("/data/system-info")
+async def get_system_info():
+    """
+    📋 Get comprehensive system information for troubleshooting
+    """
+    try:
+        vault = app_state.get("vault")
+        auth_manager = app_state.get("auth_manager")
+        storage_manager = app_state.get("storage_manager")
+        
+        # Count files
+        files_count = len(storage_manager.stored_files) if storage_manager else 0
+        accounts_count = len(auth_manager.accounts) if auth_manager else 0
+        
+        # Check file existence
+        vault_id = vault.vault_id if vault else None
+        files_status = {}
+        
+        if vault_id:
+            files_status = {
+                "vault_registry": os.path.exists(get_vault_registry_path()),
+                "accounts_file": os.path.exists(get_accounts_file_path(vault_id)),
+                "registry_file": os.path.exists(get_registry_file_path(vault_id))
+            }
+        
+        system_info = {
+            "brontobox_version": "1.0.0",
+            "vault_status": {
+                "unlocked": app_state["vault_unlocked"],
+                "vault_id": vault_id,
+                "has_vault": vault is not None
+            },
+            "data_status": {
+                "files_in_memory": files_count,
+                "accounts_configured": accounts_count,
+                "persistent_files": files_status
+            },
+            "api_status": {
+                "server_running": True,
+                "endpoints_available": [
+                    "/files/list", "/files/upload", "/files/download",
+                    "/accounts/list", "/accounts/authenticate",
+                    "/storage/info", "/vault/status"
+                ]
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return {
+            "success": True,
+            "system_info": system_info
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -1080,7 +1813,10 @@ async def general_exception_handler(request, exc):
     )
 
 if __name__ == "__main__":
-    print("🦕 Starting BrontoBox API Server...")
+    print("🦕 Starting BrontoBox API Server with Enhanced Security & Unified File Experience...")
+    print("🔐 Vault authentication: SECURE")
+    print("🔍 File discovery: AUTO-ENABLED")
+    print("📁 Unified file view: ACTIVE")
     print("🔌 WebSocket: ws://localhost:8000/ws")
     print("📚 API Docs: http://localhost:8000/docs")
     print("🔧 Health Check: http://localhost:8000/health")

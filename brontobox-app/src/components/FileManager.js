@@ -1,21 +1,26 @@
-// src/components/FileManager.js
+// src/components/FileManager.js - UPDATED FOR BRONTOBOX FILES VIEW
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search, Filter, SortAsc, SortDesc, Grid, List, 
   Folder, File, Calendar, HardDrive, Eye, Trash2,
-  Download, RefreshCw, Settings, ArrowLeft
+  Download, RefreshCw, Settings, ArrowLeft, Clock,
+  Upload, FileText, Image, Video, Archive
 } from 'lucide-react';
 import { APIService } from '../services/APIService';
 import { useNotification } from './NotificationContext';
 
 const FileTypeIcon = ({ fileName, fileType }) => {
-  if (fileType === 'Encrypted Chunk') {
-    return <File className="w-5 h-5 text-blue-500" />;
-  } else if (fileType === 'Metadata') {
-    return <Settings className="w-5 h-5 text-purple-500" />;
+  const ext = fileName.toLowerCase().split('.').pop();
+  
+  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg'].includes(ext)) {
+    return <Image className="w-5 h-5 text-blue-500" />;
+  } else if (['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv'].includes(ext)) {
+    return <Video className="w-5 h-5 text-purple-500" />;
+  } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+    return <Archive className="w-5 h-5 text-orange-500" />;
   } else {
-    return <File className="w-5 h-5 text-gray-500" />;
+    return <FileText className="w-5 h-5 text-gray-500" />;
   }
 };
 
@@ -39,30 +44,45 @@ const FileCard = ({ file, viewMode, onDelete, onDownload }) => {
       >
         <td className="px-4 py-3">
           <div className="flex items-center space-x-3">
-            <FileTypeIcon fileName={file.name} fileType={file.file_type} />
+            <FileTypeIcon fileName={file.name} />
             <div>
               <p className="font-medium text-gray-800 truncate max-w-xs" title={file.name}>
                 {file.name}
               </p>
-              <p className="text-xs text-gray-500">{file.file_type}</p>
+              <div className="flex items-center space-x-2 text-xs text-gray-500">
+                {file.is_discovered ? (
+                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                    <Clock className="w-3 h-3 inline mr-1" />
+                    Discovered
+                  </span>
+                ) : (
+                  <span className="bg-green-100 text-green-700 px-2 py-1 rounded">
+                    <Upload className="w-3 h-3 inline mr-1" />
+                    Uploaded
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </td>
         <td className="px-4 py-3 text-sm text-gray-600">
-          {file.size_formatted}
+          {APIService.formatFileSize(file.size_bytes)}
         </td>
         <td className="px-4 py-3 text-sm text-gray-600">
-          {formatDate(file.created_time)}
+          {file.chunks} chunk{file.chunks !== 1 ? 's' : ''}
         </td>
         <td className="px-4 py-3 text-sm text-gray-600">
-          {file.drive_account.substring(0, 8)}...
+          {formatDate(file.created_at)}
+        </td>
+        <td className="px-4 py-3 text-sm text-gray-600">
+          {file.accounts_used?.length || 0} account{(file.accounts_used?.length || 0) !== 1 ? 's' : ''}
         </td>
         <td className="px-4 py-3">
           <div className="flex space-x-2">
             <button
               onClick={() => onDownload(file)}
               className="p-1 rounded-lg hover:bg-blue-100 text-blue-600"
-              title="Download Raw Chunk"
+              title="Download Original File"
             >
               <Download className="w-4 h-4" />
             </button>
@@ -75,7 +95,7 @@ const FileCard = ({ file, viewMode, onDelete, onDownload }) => {
             <button
               onClick={() => onDelete(file)}
               className="p-1 rounded-lg hover:bg-red-100 text-red-600"
-              title="Delete Chunk"
+              title="Delete File"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -93,22 +113,35 @@ const FileCard = ({ file, viewMode, onDelete, onDownload }) => {
     >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center space-x-3">
-          <FileTypeIcon fileName={file.name} fileType={file.file_type} />
+          <FileTypeIcon fileName={file.name} />
           <div>
             <h3 className="font-medium text-gray-800 truncate max-w-40" title={file.name}>
               {file.name}
             </h3>
-            <p className="text-xs text-gray-500">{file.file_type}</p>
+            <div className="flex items-center space-x-2 text-xs text-gray-500 mt-1">
+              {file.is_discovered ? (
+                <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                  <Clock className="w-3 h-3 inline mr-1" />
+                  Discovered
+                </span>
+              ) : (
+                <span className="bg-green-100 text-green-700 px-2 py-1 rounded">
+                  <Upload className="w-3 h-3 inline mr-1" />
+                  Uploaded
+                </span>
+              )}
+            </div>
           </div>
         </div>
         <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
-          {file.size_formatted}
+          {APIService.formatFileSize(file.size_bytes)}
         </span>
       </div>
 
-      <div className="text-xs text-gray-600 mb-3">
-        <p>📅 {formatDate(file.created_time)}</p>
-        <p>💾 Account: {file.drive_account.substring(0, 12)}...</p>
+      <div className="text-xs text-gray-600 mb-3 space-y-1">
+        <p>📦 {file.chunks} chunk{file.chunks !== 1 ? 's' : ''}</p>
+        <p>📧 {file.accounts_used?.length || 0} account{(file.accounts_used?.length || 0) !== 1 ? 's' : ''}</p>
+        <p>📅 {formatDate(file.created_at)}</p>
       </div>
 
       <div className="flex justify-between items-center">
@@ -146,7 +179,7 @@ const SearchBar = ({ searchTerm, onSearchChange, onSearchSubmit, isSearching }) 
             type="text"
             value={searchTerm}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search chunks by name, metadata..."
+            placeholder="Search files by name..."
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
@@ -168,6 +201,7 @@ const SearchBar = ({ searchTerm, onSearchChange, onSearchSubmit, isSearching }) 
 
 const FileManager = ({ account, onClose }) => {
   const [files, setFiles] = useState([]);
+  const [allFiles, setAllFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -176,52 +210,52 @@ const FileManager = ({ account, onClose }) => {
   const [viewMode, setViewMode] = useState('grid');
   const [folderStats, setFolderStats] = useState(null);
   const [searchActive, setSearchActive] = useState(false);
+  const [viewType, setViewType] = useState('brontobox'); // 'brontobox' or 'raw'
 
   const { showNotification } = useNotification();
 
   useEffect(() => {
     loadFiles();
     loadFolderStats();
-  }, [account]);
+  }, [account, viewType]);
 
   const loadFiles = async () => {
     try {
       setLoading(true);
-      // Call API to list chunks for this account
-      const response = await fetch(`http://127.0.0.1:8000/drive/chunks/${account.account_id}?sort_by=${sortBy}&order=${sortOrder}`);
       
-      if (response.ok) {
-        const data = await response.json();
-        setFiles(data.chunks || []);
+      if (viewType === 'brontobox') {
+        // Load BrontoBox files for this account
+        const response = await fetch(`http://127.0.0.1:8000/drive/brontobox-files/${account.account_id}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          const accountFiles = data.files || [];
+          setFiles(accountFiles);
+          setAllFiles(accountFiles);
+          console.log(`📁 Loaded ${accountFiles.length} BrontoBox files for account ${account.email}`);
+        } else {
+          throw new Error('Failed to load BrontoBox files');
+        }
       } else {
-        throw new Error('Failed to load files');
+        // Load raw chunks (technical view)
+        const response = await fetch(`http://127.0.0.1:8000/drive/raw-chunks/${account.account_id}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          const chunks = data.chunks || [];
+          setFiles(chunks);
+          setAllFiles(chunks);
+          console.log(`🔧 Loaded ${chunks.length} raw chunks for account ${account.email}`);
+        } else {
+          throw new Error('Failed to load raw chunks');
+        }
       }
+      
     } catch (error) {
       console.error('Error loading files:', error);
-      showNotification('Failed to load Google Drive files', 'error');
-      // Mock data for demonstration
-      setFiles([
-        {
-          file_id: '1',
-          name: 'brontobox_abc123_chunk_001_xyz.enc',
-          size: 1048576,
-          size_formatted: '1.0 MB',
-          created_time: new Date().toISOString(),
-          drive_account: account.account_id,
-          file_type: 'Encrypted Chunk',
-          metadata: { chunk_index: 0, brontobox_file_id: 'abc123' }
-        },
-        {
-          file_id: '2',
-          name: 'brontobox_def456_chunk_002_uvw.enc',
-          size: 524288,
-          size_formatted: '512 KB',
-          created_time: new Date(Date.now() - 3600000).toISOString(),
-          drive_account: account.account_id,
-          file_type: 'Encrypted Chunk',
-          metadata: { chunk_index: 1, brontobox_file_id: 'def456' }
-        }
-      ]);
+      showNotification(`Failed to load files: ${error.message}`, 'error');
+      setFiles([]);
+      setAllFiles([]);
     } finally {
       setLoading(false);
     }
@@ -229,7 +263,6 @@ const FileManager = ({ account, onClose }) => {
 
   const loadFolderStats = async () => {
     try {
-      // Call API to get folder statistics
       const response = await fetch(`http://127.0.0.1:8000/drive/stats/${account.account_id}`);
       
       if (response.ok) {
@@ -243,8 +276,8 @@ const FileManager = ({ account, onClose }) => {
         total_files: files.length,
         total_size_mb: 15.5,
         file_types: {
-          'Encrypted Chunk': files.length - 1,
-          'Metadata': 1
+          'BrontoBox Files': files.filter(f => viewType === 'brontobox').length,
+          'Raw Chunks': files.length
         }
       });
     }
@@ -254,7 +287,7 @@ const FileManager = ({ account, onClose }) => {
     e.preventDefault();
     if (!searchTerm.trim()) {
       setSearchActive(false);
-      loadFiles();
+      setFiles(allFiles);
       return;
     }
 
@@ -262,25 +295,17 @@ const FileManager = ({ account, onClose }) => {
       setIsSearching(true);
       setSearchActive(true);
       
-      // Call search API
-      const response = await fetch(`http://127.0.0.1:8000/drive/search/${account.account_id}?query=${encodeURIComponent(searchTerm)}`);
+      // Filter locally for BrontoBox files
+      const filtered = allFiles.filter(file => 
+        file.name.toLowerCase().includes(searchTerm.toLowerCase())
+      );
       
-      if (response.ok) {
-        const data = await response.json();
-        setFiles(data.chunks || []);
-        showNotification(`Found ${data.chunks?.length || 0} matching files`, 'info');
-      } else {
-        throw new Error('Search failed');
-      }
+      setFiles(filtered);
+      showNotification(`Found ${filtered.length} matching files`, 'info');
+      
     } catch (error) {
       console.error('Search error:', error);
       showNotification('Search failed', 'error');
-      // Filter locally as fallback
-      const filtered = files.filter(file => 
-        file.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        JSON.stringify(file.metadata).toLowerCase().includes(searchTerm.toLowerCase())
-      );
-      setFiles(filtered);
     } finally {
       setIsSearching(false);
     }
@@ -289,7 +314,7 @@ const FileManager = ({ account, onClose }) => {
   const clearSearch = () => {
     setSearchTerm('');
     setSearchActive(false);
-    loadFiles();
+    setFiles(allFiles);
   };
 
   const handleSort = (newSortBy) => {
@@ -299,20 +324,48 @@ const FileManager = ({ account, onClose }) => {
       setSortBy(newSortBy);
       setSortOrder('desc');
     }
-    // Reload files with new sort
-    setTimeout(loadFiles, 100);
+    
+    // Sort files locally
+    const sorted = [...files].sort((a, b) => {
+      let aVal, bVal;
+      
+      switch (newSortBy) {
+        case 'name':
+          aVal = a.name.toLowerCase();
+          bVal = b.name.toLowerCase();
+          break;
+        case 'size':
+          aVal = a.size_bytes || a.size || 0;
+          bVal = b.size_bytes || b.size || 0;
+          break;
+        case 'date':
+          aVal = new Date(a.created_at || a.created_time);
+          bVal = new Date(b.created_at || b.created_time);
+          break;
+        default:
+          return 0;
+      }
+      
+      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+    
+    setFiles(sorted);
   };
 
   const handleDownload = async (file) => {
     try {
       showNotification(`Downloading ${file.name}...`, 'info');
       
-      // Download the raw chunk file
-      const response = await fetch(`http://127.0.0.1:8000/drive/download/${account.account_id}/${file.file_id}`, {
-        method: 'GET'
-      });
-      
-      if (response.ok) {
+      if (viewType === 'brontobox') {
+        // Download original decrypted file
+        const response = await fetch(`http://127.0.0.1:8000/files/${file.file_id}/download`);
+        
+        if (!response.ok) {
+          throw new Error('Download failed');
+        }
+        
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -325,8 +378,26 @@ const FileManager = ({ account, onClose }) => {
         
         showNotification(`Downloaded ${file.name}`, 'success');
       } else {
-        throw new Error('Download failed');
+        // Download raw chunk (technical view)
+        const response = await fetch(`http://127.0.0.1:8000/drive/download/${account.account_id}/${file.file_id}`);
+        
+        if (!response.ok) {
+          throw new Error('Download failed');
+        }
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        
+        showNotification(`Downloaded raw chunk: ${file.name}`, 'success');
       }
+      
     } catch (error) {
       console.error('Download error:', error);
       showNotification(`Download failed: ${error.message}`, 'error');
@@ -334,23 +405,39 @@ const FileManager = ({ account, onClose }) => {
   };
 
   const handleDelete = async (file) => {
-    const confirmed = window.confirm(`Are you sure you want to delete "${file.name}"?\n\nThis will permanently remove this encrypted chunk from Google Drive.`);
+    const isRawChunk = viewType === 'raw';
+    const confirmMessage = isRawChunk 
+      ? `Delete raw chunk "${file.name}"?\n\nThis will permanently remove this encrypted chunk from Google Drive.`
+      : `Delete file "${file.name}"?\n\nThis will permanently remove the file and all its chunks from Google Drive.`;
+    
+    const confirmed = window.confirm(confirmMessage);
     
     if (confirmed) {
       try {
         showNotification(`Deleting ${file.name}...`, 'info');
         
-        const response = await fetch(`http://127.0.0.1:8000/drive/delete/${account.account_id}/${file.file_id}`, {
-          method: 'DELETE'
-        });
-        
-        if (response.ok) {
-          setFiles(files.filter(f => f.file_id !== file.file_id));
-          showNotification(`Deleted ${file.name}`, 'success');
-          loadFolderStats(); // Refresh stats
+        let response;
+        if (isRawChunk) {
+          response = await fetch(`http://127.0.0.1:8000/drive/delete/${account.account_id}/${file.file_id}`, {
+            method: 'DELETE'
+          });
         } else {
+          response = await fetch(`http://127.0.0.1:8000/files/${file.file_id}`, {
+            method: 'DELETE'
+          });
+        }
+        
+        if (!response.ok) {
           throw new Error('Delete failed');
         }
+        
+        // Remove from local state
+        setFiles(files.filter(f => f.file_id !== file.file_id));
+        setAllFiles(allFiles.filter(f => f.file_id !== file.file_id));
+        
+        showNotification(`Deleted ${file.name}`, 'success');
+        loadFolderStats(); // Refresh stats
+        
       } catch (error) {
         console.error('Delete error:', error);
         showNotification(`Delete failed: ${error.message}`, 'error');
@@ -364,8 +451,10 @@ const FileManager = ({ account, onClose }) => {
         <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">Loading Google Drive Files</h3>
-            <p className="text-gray-600">Scanning .brontobox_storage folder...</p>
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Loading Files</h3>
+            <p className="text-gray-600">
+              {viewType === 'brontobox' ? 'Loading BrontoBox files...' : 'Loading raw chunks...'}
+            </p>
           </div>
         </div>
       </div>
@@ -387,13 +476,37 @@ const FileManager = ({ account, onClose }) => {
             <div>
               <h2 className="text-xl font-bold text-gray-800 flex items-center">
                 <Folder className="w-6 h-6 mr-2 text-blue-500" />
-                Google Drive Files
+                {viewType === 'brontobox' ? 'BrontoBox Files' : 'Raw Google Drive Files'}
               </h2>
               <p className="text-sm text-gray-600">{account.email}</p>
             </div>
           </div>
           
           <div className="flex items-center space-x-2">
+            {/* View Type Toggle */}
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setViewType('brontobox')}
+                className={`px-3 py-1 rounded text-xs transition-colors ${
+                  viewType === 'brontobox' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                📁 BrontoBox Files
+              </button>
+              <button
+                onClick={() => setViewType('raw')}
+                className={`px-3 py-1 rounded text-xs transition-colors ${
+                  viewType === 'raw' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                🔧 Raw Chunks
+              </button>
+            </div>
+            
             <button
               onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -417,20 +530,17 @@ const FileManager = ({ account, onClose }) => {
             <div className="flex items-center justify-between text-sm">
               <div className="flex items-center space-x-6">
                 <span className="text-gray-600">
-                  📁 {folderStats.total_files} files
+                  📁 {files.length} {viewType === 'brontobox' ? 'files' : 'chunks'}
                 </span>
                 <span className="text-gray-600">
                   💾 {folderStats.total_size_mb} MB total
                 </span>
-                <span className="text-gray-600">
-                  🔒 {folderStats.file_types['Encrypted Chunk'] || 0} chunks
-                </span>
+                {viewType === 'brontobox' && (
+                  <span className="text-gray-600">
+                    🔍 Original filenames shown
+                  </span>
+                )}
               </div>
-              {files.length >= 100 && (
-                <span className="text-green-600 font-medium">
-                  🔍 Search enabled (100+ files)
-                </span>
-              )}
             </div>
           </div>
         )}
@@ -459,7 +569,7 @@ const FileManager = ({ account, onClose }) => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Sort by:</span>
-              {['name', 'date', 'size', 'type'].map((option) => (
+              {['name', 'date', 'size'].map((option) => (
                 <button
                   key={option}
                   onClick={() => handleSort(option)}
@@ -496,7 +606,9 @@ const FileManager = ({ account, onClose }) => {
               <p className="text-gray-500">
                 {searchActive 
                   ? 'Try adjusting your search terms' 
-                  : 'Upload some files to see them here'
+                  : viewType === 'brontobox'
+                  ? 'No BrontoBox files found in this account'
+                  : 'No raw chunks found in this account'
                 }
               </p>
             </div>
@@ -507,8 +619,9 @@ const FileManager = ({ account, onClose }) => {
                   <tr className="border-b border-gray-200">
                     <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">Name</th>
                     <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">Size</th>
+                    <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">Chunks</th>
                     <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">Created</th>
-                    <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">Account</th>
+                    <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">Accounts</th>
                     <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">Actions</th>
                   </tr>
                 </thead>
@@ -548,14 +661,13 @@ const FileManager = ({ account, onClose }) => {
         <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
           <div className="flex items-center justify-between text-sm text-gray-600">
             <div>
-              <span className="font-medium">.brontobox_storage</span> folder in Google Drive
+              <span className="font-medium">
+                {viewType === 'brontobox' ? 'BrontoBox Files' : 'Raw Encrypted Chunks'}
+              </span> 
+              {viewType === 'brontobox' && ' - Original filenames and decrypted downloads'}
             </div>
             <div>
-              {files.length >= 100 ? (
-                <span className="text-green-600">🔍 Search available</span>
-              ) : (
-                <span>{100 - files.length} more files to enable search</span>
-              )}
+              {files.length} {viewType === 'brontobox' ? 'files' : 'chunks'} in {account.email}
             </div>
           </div>
         </div>
