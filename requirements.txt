@@ -1,5 +1,4 @@
 # BrontoBox API Server Requirements
-# Add these to your existing requirements.txt
 
 # FastAPI and server dependencies
 fastapi>=0.104.0

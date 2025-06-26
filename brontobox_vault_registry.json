@@ -1,0 +1,31 @@
+{
+  "vaults": {
+    "vault_15aa03530fa0c556d73a9c698a4b3270": {
+      "vault_id": "vault_15aa03530fa0c556d73a9c698a4b3270",
+      "salt": "EYGnYFmPvxSY/unHHnCSWA==",
+      "verification_data": {
+        "ciphertext": "hBNztXvceWVf62FSl7CS2ePkJbhJM6Abb55ZSYWQ/wJqPK6TzIFyq3VRIIDKgBsIfqqCxpdYttyZLDhIICkQmz4HEuzrAN5G/bc+2Q8S9bAzdfTKXfHqOQk+Jd7RKEDuwaIUslEoTlLznuyd8uCJi0l/YEWhhLpYvcv6KTCa6gDbadKpJxSB4K/l8YdxaUrI/9DRbCdqviMPRL5j+LFvMjoe6ba7Z2Fwy47RJlCCx0lHifbA0HKlmLAG9RXcmtKfm7cJlwAUPcM/kwFwsnp4hjJGghz699w26RJ0MCrCRq5bwq6UmjR/bTGKdZd64zVOqbfhWMfJjW75rcnt6Fxu78T18zSccciTjhzn6zS4o6J/",
+        "nonce": "4JNJDA8zeCgbMhZr",
+        "algorithm": "AES-256-GCM",
+        "key_id": "ad6513961051f0ff"
+      },
+      "created_at": "2025-06-27T00:50:59.031933",
+      "version": "1.0",
+      "last_accessed": "2025-06-27T01:00:22.994595"
+    },
+    "vault_e5d55f6cb4c6c1fb1c764aa3839b2abe": {
+      "vault_id": "vault_e5d55f6cb4c6c1fb1c764aa3839b2abe",
+      "salt": "ZfhOzuoqrJHfQD5p267XEA==",
+      "verification_data": {
+        "ciphertext": "31ARjAPdZ99ZR7y3YWFRSDYVlRtK0vRSvaQF9hNvJbT1L/8nkD3dhB7WKBePDs+SXSseJNMnTkL7V/vkNz0aUK4sEmIqQNnsmZaIkrcuzREnjV8hq5skzFJUHX0QB3VHzXt+VHuvtN5OLb8quGFiQO8aUfE3oYNy07ST+EzbrSS5VOOUX0bupoKY22TaDcFB+wg/85h4/7G5qTrCf84Stewvfor1gLoKYehIdMvIMdrYDuqA6AjOA/e23I+tjvdYtBQSvullImhNXjfwjuz/wezoDezD0UE95FfOYMk+M4y0aNTVlvV06bcOLpN9aDHNZ1sT4HSZbnjiXkpguMMGq0+pnHrQrro6N0oAZ8xpoM9j",
+        "nonce": "UQSm2MNZRN7MVAOo",
+        "algorithm": "AES-256-GCM",
+        "key_id": "88b07ee2cfa617b7"
+      },
+      "created_at": "2025-06-27T00:58:54.484174",
+      "version": "1.0",
+      "last_accessed": "2025-06-27T03:50:06.306605"
+    }
+  },
+  "created_at": "2025-06-27T00:50:59.031933"
+}
