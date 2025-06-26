@@ -129,3 +129,5 @@ const StorageOverview = ({ storageInfo }) => {
     </div>
   );
 };
+
+export default StorageOverview;

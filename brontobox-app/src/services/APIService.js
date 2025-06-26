@@ -6,7 +6,7 @@ const API_BASE_URL = 'http://127.0.0.1:8000';
 // Create axios instance with default config
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // 30 seconds timeout
+  timeout: 60000, // Increased to 60 seconds for file uploads
   headers: {
     'Content-Type': 'application/json',
   },
@@ -114,22 +114,42 @@ export class APIService {
     return response.data;
   }
 
-  // File management
+  // File management with better error handling
   static async uploadFile(file, metadata = {}) {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('metadata', JSON.stringify(metadata));
+    console.log(`📤 Starting upload: ${file.name} (${this.formatFileSize(file.size)})`);
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('metadata', JSON.stringify(metadata));
 
-    const response = await api.post('/files/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-      onUploadProgress: (progressEvent) => {
-        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-        console.log(`Upload progress: ${percentCompleted}%`);
-      },
-    });
-    return response.data;
+      const response = await api.post('/files/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 300000, // 5 minutes for large files
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          console.log(`📤 Upload progress: ${percentCompleted}% - ${file.name}`);
+        },
+      });
+      
+      console.log(`✅ Upload completed: ${file.name}`);
+      return response.data;
+    } catch (error) {
+      console.error(`❌ Upload failed: ${file.name}`, error);
+      
+      // Provide more specific error messages
+      if (error.code === 'ECONNABORTED') {
+        throw new Error(`Upload timeout: ${file.name} took too long to upload`);
+      } else if (error.response?.status === 413) {
+        throw new Error(`File too large: ${file.name} exceeds size limit`);
+      } else if (error.response?.status === 507) {
+        throw new Error(`Storage full: Not enough space to upload ${file.name}`);
+      } else {
+        throw new Error(`Upload failed: ${file.name} - ${error.message}`);
+      }
+    }
   }
 
   static async listFiles() {
@@ -139,7 +159,8 @@ export class APIService {
 
   static async downloadFile(fileId) {
     const response = await api.get(`/files/${fileId}/download`, {
-      responseType: 'blob'
+      responseType: 'blob',
+      timeout: 300000, // 5 minutes for large downloads
     });
     return response;
   }
@@ -149,36 +170,88 @@ export class APIService {
     return response.data;
   }
 
-  // WebSocket connection for real-time updates
+  // Improved WebSocket connection with better error handling
   static createWebSocket(onMessage, onError, onClose) {
-    const ws = new WebSocket('ws://127.0.0.1:8000/ws');
+    let ws = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    const reconnectDelay = 3000; // 3 seconds
     
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
-    
-    ws.onmessage = (event) => {
+    const connect = () => {
       try {
-        const data = JSON.parse(event.data);
-        console.log('WebSocket message:', data);
-        if (onMessage) onMessage(data);
+        console.log('🔌 Attempting WebSocket connection...');
+        ws = new WebSocket('ws://127.0.0.1:8000/ws');
+        
+        ws.onopen = () => {
+          console.log('🔌 WebSocket connected successfully');
+          reconnectAttempts = 0; // Reset on successful connection
+        };
+        
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log('📨 WebSocket message:', data);
+            if (onMessage) onMessage(data);
+          } catch (error) {
+            console.error('❌ WebSocket message parse error:', error);
+            if (onMessage) onMessage({ type: 'echo', data: event.data });
+          }
+        };
+        
+        ws.onerror = (error) => {
+          console.error('❌ WebSocket error:', error);
+          if (onError) onError(error);
+        };
+        
+        ws.onclose = (event) => {
+          console.log(`🔌 WebSocket closed: ${event.code} - ${event.reason}`);
+          
+          // Only attempt reconnection if it wasn't a clean close and we haven't exceeded max attempts
+          if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            console.log(`🔄 Reconnecting WebSocket (attempt ${reconnectAttempts}/${maxReconnectAttempts})...`);
+            setTimeout(connect, reconnectDelay);
+          } else if (reconnectAttempts >= maxReconnectAttempts) {
+            console.warn('⚠️ Max WebSocket reconnection attempts reached. Giving up.');
+            if (onError) onError(new Error('WebSocket connection failed after multiple attempts'));
+          }
+          
+          if (onClose) onClose(event);
+        };
+        
       } catch (error) {
-        console.error('WebSocket message parse error:', error);
-        if (onMessage) onMessage({ type: 'echo', data: event.data });
+        console.error('❌ Failed to create WebSocket:', error);
+        if (onError) onError(error);
       }
     };
     
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      if (onError) onError(error);
-    };
+    // Initial connection
+    connect();
     
-    ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
-      if (onClose) onClose(event);
+    // Return an object with a close method for cleanup
+    return {
+      close: () => {
+        if (ws) {
+          reconnectAttempts = maxReconnectAttempts; // Prevent reconnection
+          ws.close(1000, 'Manual close');
+        }
+      },
+      readyState: () => ws ? ws.readyState : WebSocket.CLOSED
     };
-    
-    return ws;
+  }
+
+  // Check if backend is reachable
+  static async checkBackendConnection() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/health`, { 
+        method: 'GET',
+        timeout: 5000 
+      });
+      return response.ok;
+    } catch (error) {
+      console.error('❌ Backend connection check failed:', error);
+      return false;
+    }
   }
 
   // Utility methods

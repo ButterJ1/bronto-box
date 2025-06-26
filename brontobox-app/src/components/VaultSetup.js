@@ -252,3 +252,5 @@ const VaultSetup = ({ onVaultUnlock }) => {
     </div>
   );
 };
+
+export default VaultSetup;

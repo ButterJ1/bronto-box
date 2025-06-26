@@ -1,4 +1,4 @@
-// src/components/Dashboard.js
+// src/components/Dashboard.js - FIXED VERSION (No Auto Reload)
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Header from './Header';
@@ -24,12 +24,13 @@ const Dashboard = ({ onVaultLock }) => {
   const [uploadProgress, setUploadProgress] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [websocket, setWebsocket] = useState(null);
 
   const { showNotification } = useNotification();
 
   // Load initial data
   const loadData = useCallback(async (showLoadingState = true) => {
+    console.log('🔄 Loading dashboard data...', { showLoadingState });
+    
     if (showLoadingState) {
       setLoading(true);
     } else {
@@ -38,10 +39,16 @@ const Dashboard = ({ onVaultLock }) => {
 
     try {
       // Load storage info and files in parallel
+      console.log('📡 Fetching storage info and files...');
       const [storageResponse, filesResponse] = await Promise.all([
         APIService.getStorageInfo(),
         APIService.listFiles()
       ]);
+
+      console.log('✅ Data loaded successfully:', { 
+        accounts: storageResponse.total_accounts, 
+        files: filesResponse.files?.length || 0 
+      });
 
       setStorageInfo(storageResponse);
       setFiles(filesResponse.files || []);
@@ -49,10 +56,11 @@ const Dashboard = ({ onVaultLock }) => {
       // Set default selected account
       if (storageResponse.accounts && storageResponse.accounts.length > 0 && !selectedAccount) {
         setSelectedAccount(storageResponse.accounts[0].account_id);
+        console.log('📧 Selected default account:', storageResponse.accounts[0].email);
       }
 
     } catch (error) {
-      console.error('Failed to load dashboard data:', error);
+      console.error('❌ Failed to load dashboard data:', error);
       showNotification('Failed to load data: ' + error.message, 'error');
     } finally {
       setLoading(false);
@@ -60,64 +68,42 @@ const Dashboard = ({ onVaultLock }) => {
     }
   }, [selectedAccount, showNotification]);
 
-  // Setup WebSocket for real-time updates
+  // NO WEBSOCKET - Remove auto-reload source
+  // Load data on mount only
   useEffect(() => {
-    const ws = APIService.createWebSocket(
-      (message) => {
-        console.log('WebSocket update:', message);
-        
-        switch (message.type) {
-          case 'file_uploaded':
-            showNotification(`File uploaded: ${message.data.filename}`, 'success');
-            loadData(false);
-            break;
-          case 'file_deleted':
-            showNotification(`File deleted: ${message.data.filename}`, 'info');
-            loadData(false);
-            break;
-          case 'account_added':
-            showNotification(`Account added: ${message.data.account.email}`, 'success');
-            loadData(false);
-            break;
-          case 'vault_locked':
-            showNotification('Vault locked', 'info');
-            onVaultLock();
-            break;
-          default:
-            console.log('Unknown message type:', message.type);
-        }
-      },
-      (error) => {
-        console.error('WebSocket error:', error);
-      },
-      (event) => {
-        console.log('WebSocket closed:', event);
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => {
-          if (!websocket || websocket.readyState === WebSocket.CLOSED) {
-            console.log('Attempting to reconnect WebSocket...');
-            loadData(false);
-          }
-        }, 5000);
-      }
-    );
-
-    setWebsocket(ws);
-
-    return () => {
-      if (ws) {
-        ws.close();
-      }
-    };
-  }, [loadData, onVaultLock, showNotification]);
-
-  // Load data on mount
-  useEffect(() => {
+    console.log('🚀 Dashboard mounting - loading initial data');
     loadData();
-  }, [loadData]);
+  }, []); // Empty dependency array - only run once
 
-  // Handle file upload
+  // Handle file upload with detailed logging
   const handleFileUpload = async (files) => {
+    console.log('📤 handleFileUpload called with:', files);
+    
+    if (!files || files.length === 0) {
+      console.warn('⚠️ No files provided to handleFileUpload');
+      showNotification('No files selected', 'warning');
+      return;
+    }
+
+    // Log each file
+    files.forEach((file, index) => {
+      console.log(`📄 File ${index + 1}:`, {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        lastModified: new Date(file.lastModified).toISOString()
+      });
+    });
+
+    // Check if vault is unlocked and accounts are available
+    if (storageInfo.total_accounts === 0) {
+      console.warn('⚠️ No Google accounts available for upload');
+      showNotification('Please add a Google account before uploading files', 'warning');
+      return;
+    }
+
+    console.log(`📤 Starting upload of ${files.length} file(s) to ${storageInfo.total_accounts} account(s)`);
+
     const uploads = files.map(file => ({
       id: Date.now() + Math.random(),
       file,
@@ -126,34 +112,55 @@ const Dashboard = ({ onVaultLock }) => {
       error: null
     }));
 
-    setUploadProgress(prev => [...prev, ...uploads]);
+    console.log('📊 Created upload tracking objects:', uploads.map(u => ({ id: u.id, name: u.file.name })));
+    setUploadProgress(prev => {
+      const newProgress = [...prev, ...uploads];
+      console.log('📈 Updated upload progress state:', newProgress.length, 'total uploads');
+      return newProgress;
+    });
 
     for (const upload of uploads) {
       try {
+        console.log(`⬆️ Processing upload: ${upload.file.name} (${APIService.formatFileSize(upload.file.size)})`);
+        
         // Update progress to show started
         setUploadProgress(prev => 
-          prev.map(u => u.id === upload.id ? { ...u, progress: 10 } : u)
+          prev.map(u => u.id === upload.id ? { 
+            ...u, 
+            progress: 10, 
+            status: 'uploading' 
+          } : u)
         );
 
         const metadata = {
           uploaded_at: new Date().toISOString(),
           original_name: upload.file.name,
-          size: upload.file.size
+          size: upload.file.size,
+          type: upload.file.type || 'application/octet-stream'
         };
 
-        // Simulate progress updates
+        console.log('📋 Upload metadata:', metadata);
+
+        // Simulate progress updates for user feedback
         const progressInterval = setInterval(() => {
           setUploadProgress(prev => 
             prev.map(u => {
-              if (u.id === upload.id && u.progress < 90) {
-                return { ...u, progress: u.progress + Math.random() * 10 };
+              if (u.id === upload.id && u.progress < 90 && u.status === 'uploading') {
+                const newProgress = Math.min(90, u.progress + Math.random() * 15);
+                console.log(`📊 Progress update: ${upload.file.name} - ${newProgress.toFixed(1)}%`);
+                return { ...u, progress: newProgress };
               }
               return u;
             })
           );
-        }, 500);
+        }, 1000);
 
+        console.log('🚀 Starting actual upload...');
+        
+        // Actual upload
         const result = await APIService.uploadFile(upload.file, metadata);
+        
+        console.log('✅ Upload API response:', result);
 
         clearInterval(progressInterval);
 
@@ -164,14 +171,15 @@ const Dashboard = ({ onVaultLock }) => {
           )
         );
 
+        console.log(`🎉 Upload completed successfully: ${upload.file.name}`);
         showNotification(`File uploaded successfully: ${upload.file.name}`, 'success');
 
       } catch (error) {
-        console.error('Upload failed:', error);
+        console.error(`💥 Upload failed: ${upload.file.name}`, error);
         
         setUploadProgress(prev => 
           prev.map(u => u.id === upload.id ? 
-            { ...u, status: 'error', error: error.message } : u
+            { ...u, status: 'error', error: error.message, progress: 0 } : u
           )
         );
 
@@ -179,19 +187,27 @@ const Dashboard = ({ onVaultLock }) => {
       }
     }
 
-    // Remove completed uploads after 3 seconds
+    // Remove completed uploads after 5 seconds
     setTimeout(() => {
+      console.log('🧹 Cleaning up completed uploads...');
       setUploadProgress(prev => 
-        prev.filter(u => uploads.find(up => up.id === u.id) ? u.status === 'error' : true)
+        prev.filter(u => {
+          const uploadItem = uploads.find(up => up.id === u.id);
+          return uploadItem ? u.status === 'error' : true;
+        })
       );
-    }, 3000);
+    }, 5000);
 
-    // Refresh data
-    setTimeout(() => loadData(false), 1000);
+    // Refresh data after all uploads (MANUAL refresh only)
+    setTimeout(() => {
+      console.log('🔄 Refreshing data after uploads completed');
+      loadData(false);
+    }, 2000);
   };
 
   // Handle file download
   const handleFileDownload = async (file) => {
+    console.log('⬇️ Starting download:', file.name);
     try {
       showNotification(`Downloading ${file.name}...`, 'info');
       
@@ -207,15 +223,17 @@ const Dashboard = ({ onVaultLock }) => {
       link.remove();
       window.URL.revokeObjectURL(url);
       
+      console.log('✅ Download completed:', file.name);
       showNotification(`Downloaded ${file.name}`, 'success');
     } catch (error) {
-      console.error('Download failed:', error);
+      console.error('❌ Download failed:', error);
       showNotification(`Download failed: ${error.message}`, 'error');
     }
   };
 
   // Handle file delete
   const handleFileDelete = async (file) => {
+    console.log('🗑️ Delete requested for:', file.name);
     try {
       const confirmed = await window.electronAPI?.showMessageBox({
         type: 'warning',
@@ -227,55 +245,66 @@ const Dashboard = ({ onVaultLock }) => {
       });
 
       if (confirmed?.response === 0) {
+        console.log('🗑️ User confirmed deletion');
         await APIService.deleteFile(file.file_id);
         showNotification(`Deleted ${file.name}`, 'success');
+        console.log('🔄 Refreshing after deletion');
         loadData(false);
+      } else {
+        console.log('❌ User cancelled deletion');
       }
     } catch (error) {
-      console.error('Delete failed:', error);
+      console.error('❌ Delete failed:', error);
       showNotification(`Delete failed: ${error.message}`, 'error');
     }
   };
 
   // Handle account selection
   const handleAccountSelect = (accountId) => {
+    console.log('📧 Account selected:', accountId);
     setSelectedAccount(accountId);
   };
 
   // Handle add account
   const handleAddAccount = async () => {
+    console.log('➕ Add account requested');
     try {
       showNotification('Starting account authentication...', 'info');
       
       const accountName = `account_${Date.now()}`;
+      console.log('🔐 Authenticating account:', accountName);
+      
       const result = await APIService.authenticateAccount(accountName);
       
       if (result.success) {
+        console.log('✅ Account authenticated:', result.account.email);
         showNotification(`Account added successfully: ${result.account.email}`, 'success');
         loadData(false);
       } else {
         throw new Error(result.message || 'Authentication failed');
       }
     } catch (error) {
-      console.error('Add account failed:', error);
+      console.error('❌ Add account failed:', error);
       showNotification(`Failed to add account: ${error.message}`, 'error');
     }
   };
 
   // Handle vault lock
   const handleVaultLock = async () => {
+    console.log('🔒 Vault lock requested');
     try {
       await APIService.lockVault();
       showNotification('Vault locked successfully', 'info');
       onVaultLock();
     } catch (error) {
-      console.error('Failed to lock vault:', error);
+      console.error('❌ Failed to lock vault:', error);
       showNotification(`Failed to lock vault: ${error.message}`, 'error');
     }
   };
 
-  // Handle refresh
+  // Handle MANUAL refresh only
   const handleRefresh = () => {
+    console.log('🔄 MANUAL refresh button clicked');
     loadData(false);
   };
 

@@ -120,3 +120,5 @@ const Sidebar = ({ accounts, selectedAccount, onAccountSelect, onAddAccount }) =
     </div>
   );
 };
+
+export default Sidebar;

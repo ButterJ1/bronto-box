@@ -1,26 +1,23 @@
-# BrontoBox Requirements 🦕📦
-# Phase 1: Core Encryption System ✅
-# Phase 2: Google OAuth and Drive Integration ⬆️
+# BrontoBox API Server Requirements
+# Add these to your existing requirements.txt
 
-# Core Cryptography (Phase 1)
+# FastAPI and server dependencies
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6  # For file uploads
+websockets>=12.0         # For real-time updates
+
+# Existing BrontoBox requirements (Phase 1 & 2)
 cryptography>=41.0.0
-
-# Google API and OAuth (Phase 2)
 google-api-python-client>=2.100.0
 google-auth-httplib2>=0.1.0
 google-auth-oauthlib>=1.0.0
 google-auth>=2.23.0
 
-# Development and Testing
+# Development and testing
 pytest>=7.4.0
 pytest-cov>=4.1.0
+httpx>=0.25.0           # For testing API endpoints
 
-# Optional: For performance improvements
+# Optional: Performance improvements
 pycryptodome>=3.18.0
-
-# Future phases will add:
-# selenium>=4.15.0                   # Account automation (Phase 3)
-# fastapi>=0.104.0                   # REST API server (Phase 4)
-# sqlalchemy>=2.0.0                  # Database ORM (Phase 4)
-# aiofiles>=23.2.0                   # Async file operations (Phase 4)
-# electron                           # Desktop UI (Phase 5)

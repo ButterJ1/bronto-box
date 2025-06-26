@@ -62,3 +62,5 @@ const Header = ({ storageInfo, onVaultLock, onRefresh, refreshing }) => {
     </header>
   );
 };
+
+export default Header;

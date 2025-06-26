@@ -1,4 +1,3 @@
-
 // src/components/UploadProgress.js
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -91,4 +90,4 @@ const UploadProgress = ({ uploads }) => {
   );
 };
 
-export { FileArea, StorageOverview, Sidebar, UploadProgress };
+export default UploadProgress;

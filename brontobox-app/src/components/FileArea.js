@@ -182,3 +182,5 @@ const FileArea = ({ files, onFileUpload, onFileDownload, onFileDelete, storageIn
     </div>
   );
 };
+
+export default FileArea;
