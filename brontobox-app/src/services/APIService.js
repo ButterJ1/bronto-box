@@ -1,4 +1,4 @@
-// src/services/APIService.js
+// src/services/APIService.js - FIXED ERROR HANDLING
 import axios from 'axios';
 
 const API_BASE_URL = 'http://127.0.0.1:8000';
@@ -24,18 +24,32 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor for error handling
+// Response interceptor for error handling - FIXED VERSION
 api.interceptors.response.use(
   (response) => {
     console.log(`API Response: ${response.status} ${response.config.url}`);
     return response;
   },
   (error) => {
-    console.error('API Response Error:', error.response?.status, error.response?.data);
+    // FIXED: Better error logging with null checks
+    const status = error.response?.status || 'No Status';
+    const data = error.response?.data || 'No Response Data';
+    const message = error.message || 'Unknown Error';
+    
+    console.error(`API Response Error: ${status}`, data);
+    console.error(`Error Type: ${error.code || 'Unknown'} - ${message}`);
     
     // Handle specific error cases
     if (error.code === 'ECONNREFUSED') {
       throw new Error('Cannot connect to BrontoBox API server. Please ensure it is running.');
+    }
+    
+    if (error.code === 'ECONNABORTED') {
+      // Handle timeout specifically for OAuth which can take time
+      if (error.config?.url?.includes('/accounts/authenticate')) {
+        throw new Error('Google authentication timed out. This is normal - please try again and complete the authentication quickly.');
+      }
+      throw new Error(`Request timed out after ${error.config?.timeout || 60000}ms`);
     }
     
     if (error.response?.status === 401) {
@@ -46,6 +60,7 @@ api.interceptors.response.use(
       throw new Error(error.response?.data?.detail || 'Internal server error');
     }
     
+    // Re-throw the original error with better context
     throw error;
   }
 );
@@ -53,8 +68,14 @@ api.interceptors.response.use(
 export class APIService {
   // Health and status endpoints
   static async getHealth() {
-    const response = await api.get('/health');
-    return response.data;
+    try {
+      const response = await api.get('/health');
+      return response.data;
+    } catch (error) {
+      // Graceful fallback for health checks
+      console.warn('Health check failed, API may be starting up');
+      throw error;
+    }
   }
 
   static async getVaultStatus() {
@@ -91,11 +112,21 @@ export class APIService {
     return response.data;
   }
 
+  // FIXED: Better timeout handling for OAuth
   static async authenticateAccount(accountName) {
-    const response = await api.post('/accounts/authenticate', {
-      account_name: accountName
-    });
-    return response.data;
+    try {
+      const response = await api.post('/accounts/authenticate', {
+        account_name: accountName
+      }, {
+        timeout: 120000 // 2 minutes for OAuth flow
+      });
+      return response.data;
+    } catch (error) {
+      if (error.code === 'ECONNABORTED') {
+        throw new Error('Authentication timed out. Please try again and complete Google OAuth quickly.');
+      }
+      throw error;
+    }
   }
 
   static async listAccounts() {
@@ -167,6 +198,17 @@ export class APIService {
 
   static async deleteFile(fileId) {
     const response = await api.delete(`/files/${fileId}`);
+    return response.data;
+  }
+
+  // Registry management
+  static async saveFileRegistry() {
+    const response = await api.post('/files/save-registry');
+    return response.data;
+  }
+
+  static async loadFileRegistry() {
+    const response = await api.post('/files/load-registry');
     return response.data;
   }
 

@@ -1,7 +1,7 @@
-# drive_client.py
+# drive_client.py - ENHANCED FILE MANAGEMENT
 """
-BrontoBox Google Drive Client
-Handles file upload/download operations with Google Drive API
+BrontoBox Google Drive Client - ENHANCED VERSION
+Handles file upload/download operations with advanced file management
 """
 
 import os
@@ -10,7 +10,7 @@ import json
 import time
 import hashlib
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 import mimetypes
 
 # Google Drive API imports
@@ -24,14 +24,17 @@ from google_auth import GoogleAuthManager
 
 
 class DriveFile:
-    """Represents a file stored in Google Drive"""
+    """Represents a file stored in Google Drive with enhanced metadata"""
     def __init__(self, file_id: str, name: str, size: int, 
-                 created_time: str, drive_account: str):
+                 created_time: str, drive_account: str, 
+                 modified_time: str = None, mime_type: str = None):
         self.file_id = file_id
         self.name = name
         self.size = size
         self.created_time = created_time
+        self.modified_time = modified_time or created_time
         self.drive_account = drive_account
+        self.mime_type = mime_type or 'application/octet-stream'
         self.metadata = {}
 
     def to_dict(self) -> Dict[str, Any]:
@@ -40,9 +43,31 @@ class DriveFile:
             'name': self.name,
             'size': self.size,
             'created_time': self.created_time,
+            'modified_time': self.modified_time,
             'drive_account': self.drive_account,
-            'metadata': self.metadata
+            'mime_type': self.mime_type,
+            'metadata': self.metadata,
+            'file_type': self.get_file_type(),
+            'size_formatted': self.get_formatted_size()
         }
+
+    def get_file_type(self) -> str:
+        """Get human-readable file type"""
+        if '.enc' in self.name:
+            return 'Encrypted Chunk'
+        elif 'manifest' in self.name.lower():
+            return 'Metadata'
+        else:
+            return 'Data'
+
+    def get_formatted_size(self) -> str:
+        """Get human-readable file size"""
+        if self.size < 1024:
+            return f"{self.size} B"
+        elif self.size < 1024 * 1024:
+            return f"{self.size / 1024:.1f} KB"
+        else:
+            return f"{self.size / (1024 * 1024):.1f} MB"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'DriveFile':
@@ -51,7 +76,9 @@ class DriveFile:
             name=data['name'],
             size=data['size'],
             created_time=data['created_time'],
-            drive_account=data['drive_account']
+            drive_account=data['drive_account'],
+            modified_time=data.get('modified_time'),
+            mime_type=data.get('mime_type')
         )
         file_obj.metadata = data.get('metadata', {})
         return file_obj
@@ -59,8 +86,8 @@ class DriveFile:
 
 class BrontoBoxDriveClient:
     """
-    Google Drive client for BrontoBox encrypted storage
-    Handles chunk upload/download with proper error handling and retries
+    Enhanced Google Drive client for BrontoBox encrypted storage
+    Includes advanced file management, sorting, and search capabilities
     """
 
     def __init__(self, auth_manager: GoogleAuthManager):
@@ -103,7 +130,7 @@ class BrontoBoxDriveClient:
             folder_metadata = {
                 'name': self.brontobox_folder_name,
                 'mimeType': 'application/vnd.google-apps.folder',
-                'description': 'BrontoBox encrypted storage - DO NOT DELETE'
+                'description': 'BrontoBox encrypted storage - DO NOT DELETE\n\nThis folder contains encrypted file chunks. Deleting files here will cause data loss!'
             }
             
             folder = service.files().create(body=folder_metadata, fields='id').execute()
@@ -140,24 +167,26 @@ class BrontoBoxDriveClient:
             'description': f'BrontoBox encrypted chunk - {datetime.now().isoformat()}'
         }
         
-        # Add custom metadata as properties (keep under 124 bytes limit!)
+        # Add custom metadata as properties
         if metadata:
             # Create compact metadata to stay under Google's 124-byte limit
             compact_metadata = {
                 'brontobox': 'true',
-                'v': metadata.get('brontobox_version', '1.0')[:10],  # Truncate version
-                'test': str(metadata.get('test_file', False))[:5]    # Boolean as short string
+                'v': metadata.get('brontobox_version', '1.0')[:10],
+                'type': 'chunk'
             }
             
-            # Only add properties if total size is reasonable
+            # Add chunk-specific metadata
+            if 'chunk_index' in metadata:
+                compact_metadata['idx'] = str(metadata['chunk_index'])
+            if 'brontobox_file_id' in metadata:
+                compact_metadata['fid'] = metadata['brontobox_file_id'][:20]
+            
             metadata_str = json.dumps(compact_metadata)
-            if len(metadata_str.encode('utf-8')) < 100:  # Leave some buffer
+            if len(metadata_str.encode('utf-8')) < 100:
                 file_metadata['properties'] = compact_metadata
-            else:
-                print("⚠️ Metadata too large, skipping properties")
         else:
-            # Minimal metadata
-            file_metadata['properties'] = {'brontobox': 'true'}
+            file_metadata['properties'] = {'brontobox': 'true', 'type': 'chunk'}
         
         # Create media upload
         chunk_stream = io.BytesIO(chunk_data)
@@ -175,7 +204,7 @@ class BrontoBoxDriveClient:
                 request = service.files().create(
                     body=file_metadata,
                     media_body=media,
-                    fields='id,name,size,createdTime'
+                    fields='id,name,size,createdTime,modifiedTime,mimeType'
                 )
                 
                 response = None
@@ -191,7 +220,9 @@ class BrontoBoxDriveClient:
                     name=response['name'],
                     size=int(response.get('size', len(chunk_data))),
                     created_time=response['createdTime'],
-                    drive_account=account_id
+                    modified_time=response.get('modifiedTime'),
+                    drive_account=account_id,
+                    mime_type=response.get('mimeType')
                 )
                 drive_file.metadata = metadata or {}
                 
@@ -319,12 +350,16 @@ class BrontoBoxDriveClient:
             print(f"❌ Delete failed: {e}")
             return False
     
-    def list_chunks(self, account_id: str) -> List[DriveFile]:
+    def list_chunks(self, account_id: str, sort_by: str = 'name', 
+                   search_query: str = None, limit: int = None) -> List[DriveFile]:
         """
-        List all BrontoBox chunks in an account
+        List all BrontoBox chunks in an account with enhanced filtering and sorting
         
         Args:
             account_id: Account to list chunks from
+            sort_by: Sort by 'name', 'date', 'size', 'type' (default: 'name')
+            search_query: Search term to filter files
+            limit: Maximum number of files to return
             
         Returns:
             List of DriveFile objects
@@ -335,19 +370,28 @@ class BrontoBoxDriveClient:
             # Find BrontoBox folder
             folder_id = self._create_brontobox_folder(account_id)
             
-            # List files in BrontoBox folder
+            # Build query
             query = f"'{folder_id}' in parents and trashed=false"
+            
+            # Add search filter if provided
+            if search_query:
+                query += f" and name contains '{search_query}'"
+            
+            # List files in BrontoBox folder with enhanced fields
             results = service.files().list(
                 q=query,
-                fields='files(id,name,size,createdTime,properties)'
+                fields='files(id,name,size,createdTime,modifiedTime,mimeType,properties)',
+                pageSize=limit or 1000,  # Default to 1000, but respect limit
+                orderBy='name' if sort_by == 'name' else 'createdTime desc' if sort_by == 'date' else None
             ).execute()
             
             chunks = []
             for item in results.get('files', []):
-                # Check if it's a BrontoBox chunk (check both old and new property formats)
+                # Check if it's a BrontoBox chunk
                 properties = item.get('properties', {})
                 is_brontobox = (properties.get('brontobox_chunk') == 'true' or 
-                               properties.get('brontobox') == 'true')
+                               properties.get('brontobox') == 'true' or
+                               item['name'].endswith('.enc'))
                 
                 if is_brontobox:
                     # Parse metadata (handle both old and new formats)
@@ -358,22 +402,74 @@ class BrontoBoxDriveClient:
                         except:
                             pass
                     
+                    # Add properties as metadata
+                    metadata.update(properties)
+                    
                     drive_file = DriveFile(
                         file_id=item['id'],
                         name=item['name'],
                         size=int(item.get('size', 0)),
                         created_time=item['createdTime'],
-                        drive_account=account_id
+                        modified_time=item.get('modifiedTime'),
+                        drive_account=account_id,
+                        mime_type=item.get('mimeType')
                     )
                     drive_file.metadata = metadata
                     chunks.append(drive_file)
             
-            print(f"📋 Found {len(chunks)} chunks in {account_id}")
+            # Apply sorting if not done by API
+            if sort_by == 'size':
+                chunks.sort(key=lambda x: x.size, reverse=True)
+            elif sort_by == 'type':
+                chunks.sort(key=lambda x: x.get_file_type())
+            
+            # Apply limit if specified and not done by API
+            if limit and len(chunks) > limit:
+                chunks = chunks[:limit]
+            
+            print(f"📋 Found {len(chunks)} chunks in {account_id} (sorted by {sort_by})")
             return chunks
             
         except Exception as e:
             print(f"❌ Failed to list chunks: {e}")
             return []
+    
+    def search_chunks(self, account_id: str, search_term: str, 
+                     search_type: str = 'all') -> List[DriveFile]:
+        """
+        Advanced search functionality for BrontoBox chunks
+        
+        Args:
+            account_id: Account to search in
+            search_term: Term to search for
+            search_type: 'name', 'content', 'metadata', 'all'
+            
+        Returns:
+            List of matching DriveFile objects
+        """
+        all_chunks = self.list_chunks(account_id)
+        matching_chunks = []
+        
+        search_term_lower = search_term.lower()
+        
+        for chunk in all_chunks:
+            match_found = False
+            
+            if search_type in ['name', 'all']:
+                if search_term_lower in chunk.name.lower():
+                    match_found = True
+            
+            if search_type in ['metadata', 'all'] and not match_found:
+                # Search in metadata
+                metadata_str = json.dumps(chunk.metadata).lower()
+                if search_term_lower in metadata_str:
+                    match_found = True
+            
+            if match_found:
+                matching_chunks.append(chunk)
+        
+        print(f"🔍 Search '{search_term}' found {len(matching_chunks)} matches")
+        return matching_chunks
     
     def get_storage_info(self, account_id: str) -> Dict[str, Any]:
         """
@@ -415,6 +511,55 @@ class BrontoBoxDriveClient:
                 'account_id': account_id,
                 'error': str(e)
             }
+    
+    def get_folder_stats(self, account_id: str) -> Dict[str, Any]:
+        """
+        Get statistics about the BrontoBox folder
+        
+        Args:
+            account_id: Account to analyze
+            
+        Returns:
+            Dictionary with folder statistics
+        """
+        chunks = self.list_chunks(account_id)
+        
+        if not chunks:
+            return {
+                'total_files': 0,
+                'total_size_bytes': 0,
+                'total_size_mb': 0,
+                'file_types': {},
+                'oldest_file': None,
+                'newest_file': None
+            }
+        
+        total_size = sum(chunk.size for chunk in chunks)
+        file_types = {}
+        
+        for chunk in chunks:
+            file_type = chunk.get_file_type()
+            file_types[file_type] = file_types.get(file_type, 0) + 1
+        
+        # Sort by date to find oldest/newest
+        sorted_chunks = sorted(chunks, key=lambda x: x.created_time)
+        
+        return {
+            'total_files': len(chunks),
+            'total_size_bytes': total_size,
+            'total_size_mb': round(total_size / (1024 * 1024), 2),
+            'file_types': file_types,
+            'oldest_file': {
+                'name': sorted_chunks[0].name,
+                'date': sorted_chunks[0].created_time,
+                'size': sorted_chunks[0].get_formatted_size()
+            },
+            'newest_file': {
+                'name': sorted_chunks[-1].name,
+                'date': sorted_chunks[-1].created_time,
+                'size': sorted_chunks[-1].get_formatted_size()
+            }
+        }
     
     def cleanup_empty_folders(self, account_id: str) -> int:
         """

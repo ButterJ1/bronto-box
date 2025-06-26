@@ -1,7 +1,8 @@
 # brontobox_api.py
 """
-BrontoBox FastAPI Server
+BrontoBox FastAPI Server - COMPLETE VERSION WITH FIXES
 REST API bridge between Python backend and Electron frontend
+Includes registry persistence and download fixes
 """
 
 import os
@@ -116,6 +117,43 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Registry persistence helpers
+def save_file_registry_to_disk():
+    """Save file registry to disk for persistence"""
+    try:
+        storage_manager = app_state["storage_manager"]
+        if storage_manager and len(storage_manager.stored_files) > 0:
+            encrypted_registry = storage_manager.save_file_registry()
+            registry_file = "brontobox_file_registry.json"
+            with open(registry_file, 'w') as f:
+                json.dump(encrypted_registry, f)
+            print(f"💾 File registry auto-saved ({len(storage_manager.stored_files)} files)")
+            return True
+    except Exception as e:
+        print(f"⚠️ Could not auto-save registry: {e}")
+    return False
+
+def load_file_registry_from_disk():
+    """Load file registry from disk"""
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            return False
+            
+        registry_file = "brontobox_file_registry.json"
+        if os.path.exists(registry_file):
+            with open(registry_file, 'r') as f:
+                encrypted_registry = json.load(f)
+            
+            success = storage_manager.load_file_registry(encrypted_registry)
+            if success:
+                files_loaded = len(storage_manager.stored_files)
+                print(f"📂 Auto-loaded {files_loaded} files from registry")
+                return True
+    except Exception as e:
+        print(f"⚠️ Could not auto-load registry: {e}")
+    return False
+
 # API Endpoints
 
 @app.get("/")
@@ -133,13 +171,16 @@ async def root():
 async def health_check():
     """Health check endpoint"""
     auth_manager = app_state.get("auth_manager")
+    storage_manager = app_state.get("storage_manager")
     accounts_count = len(auth_manager.accounts) if auth_manager else 0
+    files_count = len(storage_manager.stored_files) if storage_manager else 0
     
     return {
         "status": "healthy",
         "vault": app_state["vault"] is not None,
         "vault_unlocked": app_state["vault_unlocked"],
-        "accounts_configured": accounts_count
+        "accounts_configured": accounts_count,
+        "files_stored": files_count
     }
 
 # Vault Management Endpoints
@@ -225,6 +266,9 @@ async def unlock_vault(request: VaultUnlockRequest):
         app_state["storage_manager"] = storage_manager
         app_state["vault_unlocked"] = True
         
+        # Auto-load file registry
+        load_file_registry_from_disk()
+        
         await manager.broadcast({
             "type": "vault_unlocked",
             "data": {"status": "Vault unlocked successfully"}
@@ -233,7 +277,8 @@ async def unlock_vault(request: VaultUnlockRequest):
         return {
             "success": True,
             "message": "Vault unlocked successfully",
-            "accounts_loaded": len(auth_manager.accounts)
+            "accounts_loaded": len(auth_manager.accounts),
+            "files_loaded": len(storage_manager.stored_files)
         }
         
     except HTTPException:
@@ -245,6 +290,9 @@ async def unlock_vault(request: VaultUnlockRequest):
 async def lock_vault():
     """Lock the vault"""
     try:
+        # Save registry before locking
+        save_file_registry_to_disk()
+        
         if app_state["vault"]:
             app_state["vault"].lock_vault()
         
@@ -269,19 +317,23 @@ async def get_vault_status():
     """Get current vault status"""
     vault = app_state["vault"]
     auth_manager = app_state["auth_manager"]
+    storage_manager = app_state["storage_manager"]
     
     if not vault:
         return {
             "unlocked": False,
             "accounts_configured": 0,
+            "files_stored": 0,
             "message": "Vault not initialized"
         }
     
     accounts_count = len(auth_manager.accounts) if auth_manager else 0
+    files_count = len(storage_manager.stored_files) if storage_manager else 0
     
     return {
         "unlocked": app_state["vault_unlocked"],
         "accounts_configured": accounts_count,
+        "files_stored": files_count,
         "vault_status": vault.get_vault_status() if vault else None
     }
 
@@ -467,6 +519,9 @@ async def upload_file(file: UploadFile = File(...), metadata: str = "{}"):
             if not stored_file:
                 raise HTTPException(status_code=500, detail="File stored but not found in registry")
             
+            # Auto-save registry after successful upload
+            save_file_registry_to_disk()
+            
             await manager.broadcast({
                 "type": "file_uploaded",
                 "data": {
@@ -598,6 +653,9 @@ async def delete_file(file_id: str):
         if not success:
             raise HTTPException(status_code=500, detail="Failed to delete file")
         
+        # Auto-save registry after successful deletion
+        save_file_registry_to_disk()
+        
         await manager.broadcast({
             "type": "file_deleted",
             "data": {
@@ -616,6 +674,370 @@ async def delete_file(file_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 
+@app.get("/drive/chunks/{account_id}")
+async def list_drive_chunks(
+    account_id: str, 
+    sort_by: str = "date", 
+    order: str = "desc",
+    limit: Optional[int] = None,
+    search: Optional[str] = None
+):
+    """List chunks in Google Drive with sorting and filtering"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        drive_client = storage_manager.drive_client
+        
+        # List chunks with parameters
+        chunks = drive_client.list_chunks(
+            account_id=account_id,
+            sort_by=sort_by,
+            search_query=search,
+            limit=limit
+        )
+        
+        # Convert to dict format
+        chunks_data = [chunk.to_dict() for chunk in chunks]
+        
+        return {
+            "success": True,
+            "account_id": account_id,
+            "chunks": chunks_data,
+            "total_chunks": len(chunks_data),
+            "sort_by": sort_by,
+            "order": order
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list chunks: {str(e)}")
+
+@app.get("/drive/search/{account_id}")
+async def search_drive_chunks(
+    account_id: str,
+    query: str,
+    search_type: str = "all"
+):
+    """Search chunks in Google Drive"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        drive_client = storage_manager.drive_client
+        
+        # Search chunks
+        chunks = drive_client.search_chunks(
+            account_id=account_id,
+            search_term=query,
+            search_type=search_type
+        )
+        
+        # Convert to dict format
+        chunks_data = [chunk.to_dict() for chunk in chunks]
+        
+        return {
+            "success": True,
+            "account_id": account_id,
+            "query": query,
+            "search_type": search_type,
+            "chunks": chunks_data,
+            "total_results": len(chunks_data)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to search chunks: {str(e)}")
+
+@app.get("/drive/stats/{account_id}")
+async def get_drive_folder_stats(account_id: str):
+    """Get statistics about the BrontoBox folder in Google Drive"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        drive_client = storage_manager.drive_client
+        
+        # Get folder statistics
+        stats = drive_client.get_folder_stats(account_id)
+        
+        return {
+            "success": True,
+            "account_id": account_id,
+            **stats
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get folder stats: {str(e)}")
+
+@app.get("/drive/download/{account_id}/{file_id}")
+async def download_raw_chunk(account_id: str, file_id: str):
+    """Download a raw encrypted chunk from Google Drive"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        drive_client = storage_manager.drive_client
+        
+        # Download the raw chunk
+        chunk_data = drive_client.download_chunk(account_id, file_id)
+        
+        # Get file metadata for filename
+        chunks = drive_client.list_chunks(account_id)
+        target_chunk = next((c for c in chunks if c.file_id == file_id), None)
+        
+        filename = target_chunk.name if target_chunk else f"chunk_{file_id}.enc"
+        
+        # Create temp file for download
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, filename)
+        
+        with open(temp_path, 'wb') as f:
+            f.write(chunk_data)
+        
+        return FileResponse(
+            path=temp_path,
+            filename=filename,
+            media_type='application/octet-stream'
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to download chunk: {str(e)}")
+
+@app.delete("/drive/delete/{account_id}/{file_id}")
+async def delete_raw_chunk(account_id: str, file_id: str):
+    """Delete a raw encrypted chunk from Google Drive"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        drive_client = storage_manager.drive_client
+        
+        # Get file info before deletion
+        chunks = drive_client.list_chunks(account_id)
+        target_chunk = next((c for c in chunks if c.file_id == file_id), None)
+        
+        if not target_chunk:
+            raise HTTPException(status_code=404, detail="Chunk not found")
+        
+        # Delete the chunk
+        success = drive_client.delete_chunk(account_id, file_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete chunk")
+        
+        await manager.broadcast({
+            "type": "raw_chunk_deleted",
+            "data": {
+                "account_id": account_id,
+                "file_id": file_id,
+                "filename": target_chunk.name
+            }
+        })
+        
+        return {
+            "success": True,
+            "message": f"Chunk '{target_chunk.name}' deleted successfully",
+            "account_id": account_id,
+            "file_id": file_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete chunk: {str(e)}")
+
+@app.get("/drive/folder-info/{account_id}")
+async def get_brontobox_folder_info(account_id: str):
+    """Get information about the .brontobox_storage folder"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        drive_client = storage_manager.drive_client
+        
+        # Get basic storage info
+        storage_info = drive_client.get_storage_info(account_id)
+        
+        # Get folder stats
+        folder_stats = drive_client.get_folder_stats(account_id)
+        
+        # Get account info
+        auth_manager = app_state["auth_manager"]
+        accounts = auth_manager.list_accounts()
+        account_info = next((acc for acc in accounts if acc['account_id'] == account_id), None)
+        
+        return {
+            "success": True,
+            "account_id": account_id,
+            "account_email": account_info['email'] if account_info else 'Unknown',
+            "folder_name": ".brontobox_storage",
+            "storage_info": storage_info,
+            "folder_stats": folder_stats,
+            "search_enabled": folder_stats.get('total_files', 0) >= 100
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get folder info: {str(e)}")
+
+# Account Persistence Enhancement
+@app.post("/accounts/refresh-tokens")
+async def refresh_account_tokens():
+    """Refresh all account tokens to ensure they stay valid"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        auth_manager = app_state["auth_manager"]
+        if not auth_manager:
+            raise HTTPException(status_code=500, detail="Auth manager not initialized")
+        
+        refreshed_accounts = []
+        failed_accounts = []
+        
+        for account_id in auth_manager.accounts.keys():
+            try:
+                # Getting credentials automatically refreshes tokens if needed
+                credentials = auth_manager.get_credentials(account_id)
+                if credentials:
+                    refreshed_accounts.append(account_id)
+                else:
+                    failed_accounts.append(account_id)
+            except Exception as e:
+                print(f"Failed to refresh {account_id}: {e}")
+                failed_accounts.append(account_id)
+        
+        # Save updated accounts
+        if refreshed_accounts:
+            encrypted_accounts = auth_manager.save_accounts_to_vault()
+            accounts_file = "brontobox_accounts.json"
+            with open(accounts_file, 'w') as f:
+                json.dump(encrypted_accounts, f)
+        
+        return {
+            "success": True,
+            "message": "Token refresh completed",
+            "refreshed_accounts": len(refreshed_accounts),
+            "failed_accounts": len(failed_accounts),
+            "total_accounts": len(auth_manager.accounts)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh tokens: {str(e)}")
+
+@app.get("/accounts/persistence-status")
+async def get_account_persistence_status():
+    """Check if accounts are properly persisted and will survive vault lock/unlock"""
+    try:
+        vault_info_exists = os.path.exists("brontobox_vault_info.json")
+        accounts_file_exists = os.path.exists("brontobox_accounts.json")
+        registry_file_exists = os.path.exists("brontobox_file_registry.json")
+        
+        vault_unlocked = app_state["vault_unlocked"]
+        accounts_loaded = len(app_state["auth_manager"].accounts) if app_state["auth_manager"] else 0
+        files_loaded = len(app_state["storage_manager"].stored_files) if app_state["storage_manager"] else 0
+        
+        return {
+            "success": True,
+            "persistence_status": {
+                "vault_info_saved": vault_info_exists,
+                "accounts_saved": accounts_file_exists,
+                "file_registry_saved": registry_file_exists,
+                "vault_currently_unlocked": vault_unlocked,
+                "accounts_loaded": accounts_loaded,
+                "files_loaded": files_loaded
+            },
+            "ready_for_lock_unlock": vault_info_exists and accounts_file_exists,
+            "message": "All components properly persisted" if (vault_info_exists and accounts_file_exists) else "Some components not persisted"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "persistence_status": None
+        }
+
+# Registry Management Endpoints
+
+@app.post("/files/save-registry")
+async def save_file_registry():
+    """Save file registry for persistence"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        success = save_file_registry_to_disk()
+        
+        if success:
+            storage_manager = app_state["storage_manager"]
+            files_count = len(storage_manager.stored_files) if storage_manager else 0
+            
+            return {
+                "success": True,
+                "message": "File registry saved successfully",
+                "files_count": files_count
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No files to save",
+                "files_count": 0
+            }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save registry: {str(e)}")
+
+@app.post("/files/load-registry")
+async def load_file_registry():
+    """Load file registry from persistence"""
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        success = load_file_registry_from_disk()
+        
+        if success:
+            storage_manager = app_state["storage_manager"]
+            files_loaded = len(storage_manager.stored_files) if storage_manager else 0
+            
+            return {
+                "success": True,
+                "message": "File registry loaded successfully",
+                "files_loaded": files_loaded
+            }
+        else:
+            return {
+                "success": True,
+                "message": "No registry file found or no files to load",
+                "files_loaded": 0
+            }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load registry: {str(e)}")
+
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -633,6 +1055,9 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/dev/reset")
 async def reset_app_state():
     """Reset application state (development only)"""
+    # Save registry before reset
+    save_file_registry_to_disk()
+    
     app_state["vault"] = None
     app_state["auth_manager"] = None
     app_state["storage_manager"] = None
@@ -655,10 +1080,10 @@ async def general_exception_handler(request, exc):
     )
 
 if __name__ == "__main__":
-    print("[DINO] Starting BrontoBox API Server...")
-    print("[ANTENNA] WebSocket: ws://localhost:8000/ws")
-    print("[BOOKS] API Docs: http://localhost:8000/docs")
-    print("[WRENCH] Health Check: http://localhost:8000/health")
+    print("🦕 Starting BrontoBox API Server...")
+    print("🔌 WebSocket: ws://localhost:8000/ws")
+    print("📚 API Docs: http://localhost:8000/docs")
+    print("🔧 Health Check: http://localhost:8000/health")
     
     uvicorn.run(
         "brontobox_api:app",

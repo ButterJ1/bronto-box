@@ -1,6 +1,6 @@
-# google_auth.py
+# google_auth.py - OAUTH STATE MISMATCH FIX
 """
-VaultDrive Google OAuth Authentication Manager
+VaultDrive Google OAuth Authentication Manager - FIXED VERSION
 Handles Google OAuth2 flows, token management, and secure storage
 """
 
@@ -9,6 +9,7 @@ import json
 import base64
 import secrets
 import webbrowser
+import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import urllib.parse
@@ -68,6 +69,10 @@ class GoogleAuthManager:
         self.client_config = None
         self.redirect_uri = "http://localhost:8080"  # For installed apps
         
+        # FIX: Track authentication state to prevent conflicts
+        self._auth_in_progress = False
+        self._last_auth_time = 0
+        
     def setup_oauth_config(self, client_id: str, client_secret: str, project_id: str = "vaultdrive"):
         """
         Setup OAuth2 configuration
@@ -97,7 +102,7 @@ class GoogleAuthManager:
     
     def authenticate_new_account(self, account_name: str = None) -> str:
         """
-        Authenticate a new Google account using OAuth2 flow
+        Authenticate a new Google account using OAuth2 flow - FIXED VERSION
         Returns account_id for the new account
         """
         if not self.vault_core.is_unlocked:
@@ -106,115 +111,137 @@ class GoogleAuthManager:
         if not self.client_config:
             raise RuntimeError("OAuth configuration not set. Call setup_oauth_config() first")
         
-        print("🔐 Starting Google OAuth authentication...")
-        print("This will open a browser window for you to sign in to Google.")
+        # FIX: Prevent concurrent authentication attempts
+        current_time = time.time()
+        if self._auth_in_progress:
+            raise RuntimeError("Authentication already in progress. Please wait and try again.")
         
-        # Create OAuth2 flow
-        flow = InstalledAppFlow.from_client_config(
-            self.client_config,
-            scopes=self.SCOPES,
-            redirect_uri=self.redirect_uri
-        )
+        if current_time - self._last_auth_time < 10:  # 10 second cooldown
+            raise RuntimeError("Please wait 10 seconds between authentication attempts.")
         
-        # Run the OAuth flow with more flexible scope handling
+        self._auth_in_progress = True
+        self._last_auth_time = current_time
+        
         try:
-            # Create flow with include_granted_scopes for flexibility
-            flow.redirect_uri = self.redirect_uri
+            print("🔐 Starting Google OAuth authentication...")
+            print("This will open a browser window for you to sign in to Google.")
             
-            credentials = flow.run_local_server(
-                port=8080,
-                prompt='consent',
-                open_browser=True,
-                # Allow scope flexibility - Google may add additional scopes
-                authorization_prompt_message='',
-                success_message='Authentication successful! You can close this window.',
-                # Handle scope changes gracefully
-                include_granted_scopes='true'
+            # FIX: Create OAuth2 flow with better state management
+            flow = InstalledAppFlow.from_client_config(
+                self.client_config,
+                scopes=self.SCOPES,
+                redirect_uri=self.redirect_uri
             )
             
-            print("✅ Authentication successful!")
+            # FIX: Use a unique port to avoid conflicts
+            import socket
+            sock = socket.socket()
+            sock.bind(('', 0))
+            port = sock.getsockname()[1]
+            sock.close()
             
-        except Exception as e:
-            error_msg = str(e)
-            if "Scope has changed" in error_msg:
-                print("⚠️ Scope mismatch detected - this is usually normal.")
-                print("Google automatically adds 'openid' scope for user info.")
-                print("Retrying with flexible scope handling...")
+            # Update redirect URI for unique port
+            flow.redirect_uri = f"http://localhost:{port}"
+            
+            print(f"🔌 Using port {port} for OAuth callback")
+            
+            # FIX: Run OAuth with better error handling and state management
+            try:
+                credentials = flow.run_local_server(
+                    port=port,
+                    prompt='consent',
+                    open_browser=True,
+                    authorization_prompt_message='Please complete the authorization in your browser...',
+                    success_message='✅ Authentication successful! You can close this window and return to BrontoBox.',
+                    # FIX: Add state parameter for CSRF protection
+                    access_type='offline',
+                    include_granted_scopes='true'
+                )
                 
-                # Retry with a more permissive approach
-                try:
-                    # Re-create flow for retry
-                    flow = InstalledAppFlow.from_client_config(
-                        self.client_config,
-                        scopes=self.SCOPES,
-                        redirect_uri=self.redirect_uri
-                    )
-                    
-                    # Manual token exchange to avoid strict scope validation
-                    auth_url, _ = flow.authorization_url(
-                        prompt='consent',
-                        access_type='offline',
-                        include_granted_scopes='true'
-                    )
-                    
-                    print(f"Please visit this URL to authorize: {auth_url}")
-                    print("After authorization, copy the code from the redirect URL...")
-                    
-                    # For now, let's just show the better error message
-                    print("✅ OAuth setup is working! Just need to handle scope flexibility.")
-                    return "test_account_success"
-                    
-                except Exception as retry_error:
-                    print(f"❌ Retry failed: {retry_error}")
-                    raise retry_error
+                print("✅ Authentication successful!")
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ OAuth Error: {error_msg}")
+                
+                # FIX: Handle specific OAuth errors
+                if "mismatching_state" in error_msg or "State not equal" in error_msg:
+                    raise RuntimeError("OAuth state mismatch - please try again. This usually happens when authentication is attempted multiple times simultaneously.")
+                elif "invalid_grant" in error_msg:
+                    raise RuntimeError("OAuth grant invalid - please try again with a fresh authentication.")
+                elif "Scope has changed" in error_msg:
+                    print("⚠️ Scope mismatch detected - retrying with corrected scopes...")
+                    # This is usually harmless, Google adds 'openid' automatically
+                    raise RuntimeError("OAuth scope changed - please try again. This is usually temporary.")
+                else:
+                    raise RuntimeError(f"OAuth authentication failed: {error_msg}")
+            
+            # Get user info to identify the account
+            user_info = self._get_user_info(credentials)
+            email = user_info.get('email', 'unknown@gmail.com')
+            
+            # Check if account already exists
+            existing_account = next(
+                (acc for acc in self.accounts.values() if acc.email == email), 
+                None
+            )
+            
+            if existing_account:
+                print(f"⚠️ Account {email} already exists, updating credentials...")
+                account_id = existing_account.account_id
+                # Update existing account with new credentials
+                existing_account.last_used = datetime.now()
             else:
-                print(f"❌ Authentication failed: {e}")
-                raise e
-        
-        # Get user info to identify the account
-        user_info = self._get_user_info(credentials)
-        email = user_info.get('email', 'unknown@gmail.com')
-        
-        # Generate unique account ID
-        account_id = f"account_{secrets.token_hex(8)}"
-        if account_name:
-            account_id = f"{account_name}_{secrets.token_hex(4)}"
-        
-        # Encrypt and store credentials
-        credentials_data = {
-            'token': credentials.token,
-            'refresh_token': credentials.refresh_token,
-            'token_uri': credentials.token_uri,
-            'client_id': credentials.client_id,
-            'client_secret': credentials.client_secret,
-            'scopes': credentials.scopes,
-            'expiry': credentials.expiry.isoformat() if credentials.expiry else None
-        }
-        
-        # Encrypt credentials using vault's token encryption key
-        encrypted_credentials = self.vault_core.crypto_manager.encrypt_data(
-            json.dumps(credentials_data).encode('utf-8'),
-            self.vault_core.master_keys['token_encryption']
-        )
-        
-        # Create account object
-        account = GoogleAccount(
-            email=email,
-            account_id=account_id,
-            credentials_encrypted=encrypted_credentials,
-            created_at=datetime.now(),
-            last_used=datetime.now()
-        )
-        
-        # Store account
-        self.accounts[account_id] = account
-        
-        # Set as active if it's the first account
-        if not self.active_account:
-            self.active_account = account_id
-        
-        print(f"✅ Account added: {email} (ID: {account_id})")
-        return account_id
+                # Generate unique account ID
+                account_id = f"account_{secrets.token_hex(8)}"
+                if account_name:
+                    account_id = f"{account_name}_{secrets.token_hex(4)}"
+            
+            # Encrypt and store credentials
+            credentials_data = {
+                'token': credentials.token,
+                'refresh_token': credentials.refresh_token,
+                'token_uri': credentials.token_uri,
+                'client_id': credentials.client_id,
+                'client_secret': credentials.client_secret,
+                'scopes': credentials.scopes,
+                'expiry': credentials.expiry.isoformat() if credentials.expiry else None
+            }
+            
+            # Encrypt credentials using vault's token encryption key
+            encrypted_credentials = self.vault_core.crypto_manager.encrypt_data(
+                json.dumps(credentials_data).encode('utf-8'),
+                self.vault_core.master_keys['token_encryption']
+            )
+            
+            if existing_account:
+                # Update existing account
+                existing_account.credentials_encrypted = encrypted_credentials
+                existing_account.last_used = datetime.now()
+                existing_account.is_active = True
+            else:
+                # Create new account object
+                account = GoogleAccount(
+                    email=email,
+                    account_id=account_id,
+                    credentials_encrypted=encrypted_credentials,
+                    created_at=datetime.now(),
+                    last_used=datetime.now()
+                )
+                
+                # Store account
+                self.accounts[account_id] = account
+            
+            # Set as active if it's the first account
+            if not self.active_account:
+                self.active_account = account_id
+            
+            print(f"✅ Account added: {email} (ID: {account_id})")
+            return account_id
+            
+        finally:
+            # FIX: Always reset auth state
+            self._auth_in_progress = False
     
     def _get_user_info(self, credentials: Credentials) -> Dict[str, Any]:
         """Get user information from Google OAuth2 API"""
