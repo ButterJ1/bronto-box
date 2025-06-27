@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Eye, EyeOff, Unlock, Plus } from 'lucide-react';
 import { APIService } from '../services/APIService';
+import BrontoBoxLogo, { BrontoBoxFavicon, BrontoBoxSmall, BrontoBoxMedium, BrontoBoxLarge, BrontoBoxXL } from './BrontoBoxLogo';
 
 const VaultSetup = ({ onVaultUnlock }) => {
   const [mode, setMode] = useState('unlock'); // 'unlock' or 'create'
@@ -34,7 +35,7 @@ const VaultSetup = ({ onVaultUnlock }) => {
 
   const handleCreateVault = async (e) => {
     e.preventDefault();
-    
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -77,7 +78,9 @@ const VaultSetup = ({ onVaultUnlock }) => {
       >
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="text-6xl mb-4">🦕</div>
+          <div className="mb-4">
+            <BrontoBoxLarge />
+          </div>
           <h1 className="text-3xl font-bold text-gray-800 mb-2">BrontoBox</h1>
           <p className="text-gray-600">Secure Distributed Storage</p>
         </div>
@@ -86,22 +89,20 @@ const VaultSetup = ({ onVaultUnlock }) => {
         <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
           <button
             onClick={() => setMode('unlock')}
-            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-              mode === 'unlock'
-                ? 'bg-blue-500 text-white'
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${mode === 'unlock'
+              ? 'bg-blue-500 text-white'
+              : 'text-gray-600 hover:text-gray-800'
+              }`}
           >
             <Unlock className="w-4 h-4 inline mr-2" />
             Unlock Vault
           </button>
           <button
             onClick={() => setMode('create')}
-            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-              mode === 'create'
-                ? 'bg-blue-500 text-white'
-                : 'text-gray-600 hover:text-gray-800'
-            }`}
+            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${mode === 'create'
+              ? 'bg-blue-500 text-white'
+              : 'text-gray-600 hover:text-gray-800'
+              }`}
           >
             <Plus className="w-4 h-4 inline mr-2" />
             Create Vault
@@ -220,8 +221,8 @@ const VaultSetup = ({ onVaultUnlock }) => {
 
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <p className="text-sm text-yellow-800">
-                <strong>Important:</strong> Your master password encrypts all your data. 
-                Make sure to use a strong password and store it securely. 
+                <strong>Important:</strong> Your master password encrypts all your data.
+                Make sure to use a strong password and store it securely.
                 You'll also receive a salt that you must save.
               </p>
             </div>
@@ -245,7 +246,10 @@ const VaultSetup = ({ onVaultUnlock }) => {
 
         {/* Footer */}
         <div className="mt-8 text-center text-sm text-gray-500">
-          <p>🦕 BrontoBox v1.0.0</p>
+          <p className="flex items-center">
+            <BrontoBoxSmall className="mr-2" />
+            BrontoBox v1.0.0
+          </p>
           <p>Massive storage, maximum security</p>
         </div>
       </motion.div>

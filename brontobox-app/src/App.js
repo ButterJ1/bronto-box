@@ -1,156 +1,187 @@
-// src/App.js
+// src/App.js - UPDATED WITH RESTORE FUNCTIONALITY
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
+
+// Components
+import VaultLogin from './components/VaultLogin';
 import Dashboard from './components/Dashboard';
-import VaultSetup from './components/VaultSetup';
 import Settings from './components/Settings';
-import { APIService } from './services/APIService';
+import RestoreFromBackup from './components/RestoreFromBackup';
 import { NotificationProvider } from './components/NotificationContext';
-import './App.css';
 
-function App() {
-  const [vaultStatus, setVaultStatus] = useState({
-    unlocked: false,
-    loading: true,
-    error: null
-  });
+// Services
+import { APIService } from './services/APIService';
 
-  const [apiConnected, setApiConnected] = useState(false);
+// Logo
+import BrontoBoxLogo, { BrontoBoxFavicon, BrontoBoxSmall, BrontoBoxMedium, BrontoBoxLarge, BrontoBoxXL } from './components/BrontoBoxLogo';
 
-  // Check API connection and vault status on startup
+const App = () => {
+  const [appState, setAppState] = useState('loading'); // 'loading', 'restore_check', 'login', 'dashboard'
+  const [vaultStatus, setVaultStatus] = useState(null);
+  const [hasBackupFiles, setHasBackupFiles] = useState(false);
+  const [showRestore, setShowRestore] = useState(false);
+  const [debugInfo, setDebugInfo] = useState({ backups: false, vault: 'Unknown' });
+
   useEffect(() => {
-    let mounted = true;
-
-    const checkStatus = async () => {
-      try {
-        // Check if API server is running
-        const health = await APIService.getHealth();
-        
-        if (mounted) {
-          setApiConnected(true);
-          
-          // Check vault status
-          const status = await APIService.getVaultStatus();
-          setVaultStatus({
-            unlocked: status.unlocked,
-            loading: false,
-            error: null
-          });
-        }
-      } catch (error) {
-        if (mounted) {
-          setApiConnected(false);
-          setVaultStatus({
-            unlocked: false,
-            loading: false,
-            error: 'Cannot connect to BrontoBox API. Please ensure the backend server is running.'
-          });
-        }
-      }
-    };
-
-    checkStatus();
-
-    // Check status every 5 seconds
-    const interval = setInterval(checkStatus, 5000);
-
-    return () => {
-      mounted = false;
-      clearInterval(interval);
-    };
+    initializeApp();
   }, []);
 
-  // Handle vault unlock
-  const handleVaultUnlock = () => {
-    setVaultStatus(prev => ({ ...prev, unlocked: true }));
+  const initializeApp = async () => {
+    console.log('🚀 BrontoBox starting up...');
+
+    try {
+      // Step 1: Check if vault is already unlocked
+      console.log('🔍 Checking vault status...');
+      const status = await APIService.getVaultStatus();
+      setVaultStatus(status);
+      setDebugInfo(prev => ({ ...prev, vault: status.unlocked ? 'Unlocked' : 'Locked' }));
+
+      if (status.unlocked) {
+        console.log('✅ Vault already unlocked, proceeding to dashboard');
+        setAppState('dashboard');
+        return;
+      }
+
+      // Step 2: Check for backup files in directory
+      console.log('🔍 Checking for backup files...');
+      const backupResponse = await fetch('http://127.0.0.1:8000/backup/detect');
+
+      if (backupResponse.ok) {
+        const backupData = await backupResponse.json();
+        const hasBackups = backupData.success && backupData.vault_count > 0;
+
+        setHasBackupFiles(hasBackups);
+        setDebugInfo(prev => ({ ...prev, backups: hasBackups }));
+
+        if (hasBackups) {
+          console.log(`📁 Found ${backupData.vault_count} vault backup(s) and ${backupData.registry_count} registry backup(s)`);
+          setAppState('restore_check');
+          return;
+        }
+      } else {
+        setDebugInfo(prev => ({ ...prev, backups: false }));
+      }
+
+      // Step 3: No backups found, show normal login
+      console.log('🔐 No backups found, showing vault login');
+      setAppState('login');
+
+    } catch (error) {
+      console.error('❌ App initialization failed:', error);
+      setDebugInfo(prev => ({ ...prev, vault: 'Error', backups: false }));
+      // Fallback to login screen
+      setAppState('login');
+    }
   };
 
-  // Handle vault lock
+  const handleRestoreSuccess = (restorationSummary) => {
+    console.log('✅ Vault restored successfully:', restorationSummary);
+    setShowRestore(false);
+    setAppState('dashboard');
+  };
+
+  const handleSkipRestore = () => {
+    console.log('⏭️ User skipped restore, showing login');
+    setShowRestore(false);
+    setAppState('login');
+  };
+
+  const handleVaultUnlock = () => {
+    console.log('🔓 Vault unlocked, switching to dashboard');
+    setAppState('dashboard');
+  };
+
   const handleVaultLock = () => {
-    setVaultStatus(prev => ({ ...prev, unlocked: false }));
+    console.log('🔒 Vault locked, switching to login');
+    setAppState('login');
+    setVaultStatus(null);
+  };
+
+  // Show restore option if backups detected
+  const handleShowRestore = () => {
+    setShowRestore(true);
   };
 
   // Loading screen
-  if (vaultStatus.loading) {
+  if (appState === 'loading') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-100 via-amber-200 to-amber-200 flex items-center justify-center">
-        <div className="text-center text-white">
-          <div className="text-6xl mb-4">🦕</div>
-          <h1 className="text-3xl font-bold mb-2">BrontoBox</h1>
-          <p className="text-lg opacity-80">Loading secure storage...</p>
-          <div className="mt-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto"></div>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="mb-6">
+            <BrontoBoxLogo size={128} />
           </div>
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">BrontoBox</h1>
+          <p className="text-gray-600 mb-6">Secure Distributed Storage</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-sm text-gray-500">Initializing secure storage...</p>
         </div>
       </div>
     );
   }
 
-  // API connection error
-  if (!apiConnected) {
+  // Restore from backup screen
+  if (appState === 'restore_check' || showRestore) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
-          <div className="text-center">
-            <div className="text-red-500 text-5xl mb-4">⚠️</div>
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">Connection Error</h2>
-            <p className="text-gray-600 mb-6">
-              Cannot connect to the BrontoBox API server.
-            </p>
-            <div className="bg-gray-50 rounded-lg p-4 mb-6 text-left">
-              <p className="text-sm text-gray-700 mb-2">
-                <strong>To fix this:</strong>
-              </p>
-              <ol className="text-sm text-gray-600 space-y-1">
-                <li>1. Open a terminal in your BrontoBox directory</li>
-                <li>2. Run: <code className="bg-gray-200 px-1 rounded">python brontobox_api.py</code></li>
-                <li>3. Wait for "Application startup complete"</li>
-                <li>4. Restart BrontoBox</li>
-              </ol>
-            </div>
-            <button 
-              onClick={() => window.location.reload()}
-              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition-colors"
-            >
-              Retry Connection
-            </button>
-          </div>
-        </div>
-      </div>
+      <NotificationProvider>
+        <RestoreFromBackup
+          onRestoreSuccess={handleRestoreSuccess}
+          onSkip={handleSkipRestore}
+        />
+      </NotificationProvider>
     );
   }
 
+  // Main app with router
   return (
     <NotificationProvider>
       <Router>
-        <div className="App">
-          <Routes>
-            <Route 
-              path="/" 
-              element={
-                vaultStatus.unlocked ? (
-                  <Dashboard onVaultLock={handleVaultLock} />
-                ) : (
-                  <VaultSetup onVaultUnlock={handleVaultUnlock} />
-                )
-              } 
-            />
-            <Route 
-              path="/settings" 
-              element={
-                vaultStatus.unlocked ? (
-                  <Settings onVaultLock={handleVaultLock} />
-                ) : (
-                  <Navigate to="/" replace />
-                )
-              } 
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+        <div className="min-h-screen bg-gray-50">
+          <AnimatePresence mode="wait">
+            <Routes>
+              {/* Main Dashboard Route */}
+              <Route
+                path="/"
+                element={
+                  appState === 'dashboard' ? (
+                    <Dashboard onVaultLock={handleVaultLock} />
+                  ) : (
+                    <VaultLogin
+                      onVaultUnlock={handleVaultUnlock}
+                      hasBackupFiles={hasBackupFiles}
+                      onShowRestore={handleShowRestore}
+                    />
+                  )
+                }
+              />
+
+              {/* Settings Route */}
+              <Route
+                path="/settings"
+                element={
+                  appState === 'dashboard' ? (
+                    <Settings onVaultLock={handleVaultLock} />
+                  ) : (
+                    <Navigate to="/" replace />
+                  )
+                }
+              />
+
+              {/* Catch all - redirect to home */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </AnimatePresence>
+
+          {/* Debug info in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="fixed bottom-4 left-4 bg-black bg-opacity-75 text-white text-xs p-2 rounded">
+              App State: {appState} | Vault: {debugInfo.vault} | Backups: {debugInfo.backups ? 'Yes' : 'No'}
+            </div>
+          )}
         </div>
       </Router>
     </NotificationProvider>
   );
-}
+};
 
 export default App;

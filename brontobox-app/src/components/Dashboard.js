@@ -1,4 +1,4 @@
-// src/components/Dashboard.js - UPDATED FOR UNIFIED FILE EXPERIENCE
+// src/components/Dashboard.js - UPDATED FOR UNIFIED FILE EXPERIENCE + ACCOUNT RECOVERY
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -7,8 +7,11 @@ import Sidebar from './Sidebar';
 import FileArea from './FileArea';
 import StorageOverview from './StorageOverview';
 import UploadProgress from './UploadProgress';
+import AccountRecoveryBanner from './AccountRecoveryBanner';
 import { APIService } from '../services/APIService';
 import { useNotification } from './NotificationContext';
+import BrontoBoxLogo, { BrontoBoxFavicon, BrontoBoxSmall, BrontoBoxMedium, BrontoBoxLarge, BrontoBoxXL } from './BrontoBoxLogo';
+
 
 const Dashboard = ({ onVaultLock }) => {
   const [storageInfo, setStorageInfo] = useState({
@@ -26,6 +29,8 @@ const Dashboard = ({ onVaultLock }) => {
   const [uploadProgress, setUploadProgress] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isRestored, setIsRestored] = useState(false);
+  const [showAccountRecovery, setShowAccountRecovery] = useState(false);
 
   const { showNotification } = useNotification();
   const navigate = useNavigate();
@@ -41,24 +46,36 @@ const Dashboard = ({ onVaultLock }) => {
     }
 
     try {
-      // Load storage info, files, and statistics in parallel
-      console.log('📡 Fetching storage info, files, and statistics...');
-      const [storageResponse, filesResponse, statsResponse] = await Promise.all([
+      // Load storage info, files, statistics, and restoration status in parallel
+      console.log('📡 Fetching storage info, files, statistics, and restoration status...');
+      const [storageResponse, filesResponse, statsResponse, restoreResponse] = await Promise.all([
         APIService.getStorageInfo(),
         fetch('http://127.0.0.1:8000/files/list').then(r => r.json()),
-        fetch('http://127.0.0.1:8000/files/statistics').then(r => r.json()).catch(() => ({ statistics: null }))
+        fetch('http://127.0.0.1:8000/files/statistics').then(r => r.json()).catch(() => ({ statistics: null })),
+        fetch('http://127.0.0.1:8000/restore/status').then(r => r.json()).catch(() => ({ is_likely_restored: false }))
       ]);
 
       console.log('✅ Data loaded successfully:', {
         accounts: storageResponse.total_accounts,
         files: filesResponse.files?.length || 0,
         discovered: statsResponse.statistics?.discovered_files || 0,
-        uploaded: statsResponse.statistics?.uploaded_files || 0
+        uploaded: statsResponse.statistics?.uploaded_files || 0,
+        restored: restoreResponse.is_likely_restored || false
       });
 
       setStorageInfo(storageResponse);
       setFiles(filesResponse.files || []);
       setFileStatistics(statsResponse.statistics);
+
+      // Check if this is a restored vault that needs account setup
+      if (restoreResponse.is_likely_restored && restoreResponse.needs_account_setup) {
+        setIsRestored(true);
+        setShowAccountRecovery(true);
+        showNotification('Vault restored! Add your Google accounts to access files.', 'info');
+      } else if (restoreResponse.is_likely_restored && restoreResponse.restoration_complete) {
+        setIsRestored(true);
+        setShowAccountRecovery(false);
+      }
 
       // Show notification about discovered files
       if (statsResponse.statistics?.discovered_files > 0) {
@@ -88,6 +105,14 @@ const Dashboard = ({ onVaultLock }) => {
   useEffect(() => {
     console.log('🚀 Dashboard mounting - loading initial data with file discovery');
     loadData();
+
+    // Override body background for dashboard
+    document.body.style.background = '#f9fafb'; // gray-50
+
+    // Cleanup on unmount
+    return () => {
+      document.body.style.background = 'linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fef3c7 100%)';
+    };
   }, []);
 
   // Handle file upload with enhanced logging
@@ -303,7 +328,7 @@ const Dashboard = ({ onVaultLock }) => {
     setSelectedAccount(accountId);
   };
 
-  // Handle add account with auto file discovery
+  // Handle add account with account recovery support
   const handleAddAccount = async () => {
     console.log('➕ Add account requested');
     try {
@@ -340,6 +365,25 @@ const Dashboard = ({ onVaultLock }) => {
 
         // Refresh all data to show new account and any discovered files
         loadData(false);
+
+        // If this was for account recovery, check if we can now access more files
+        if (isRestored) {
+          setTimeout(async () => {
+            try {
+              const statusResponse = await fetch('http://127.0.0.1:8000/restore/status');
+              if (statusResponse.ok) {
+                const statusData = await statusResponse.json();
+                if (statusData.restoration_complete) {
+                  setShowAccountRecovery(false);
+                  showNotification('🎉 All accounts restored! Your files are now accessible.', 'success');
+                }
+              }
+            } catch (error) {
+              console.error('Failed to check restoration status:', error);
+            }
+          }, 2000);
+        }
+
       } else {
         throw new Error(result.message || 'Authentication failed');
       }
@@ -402,7 +446,9 @@ const Dashboard = ({ onVaultLock }) => {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="text-5xl mb-4">🦕</div>
+          <div className="mb-4">
+            <BrontoBoxLarge />
+          </div>
           <h2 className="text-xl font-semibold text-gray-700 mb-2">Loading BrontoBox</h2>
           <p className="text-sm text-gray-500 mb-4">Discovering existing files...</p>
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
@@ -412,7 +458,7 @@ const Dashboard = ({ onVaultLock }) => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
       <Header
         storageInfo={storageInfo}
@@ -423,7 +469,7 @@ const Dashboard = ({ onVaultLock }) => {
       />
 
       {/* Main Content */}
-      <div className="flex h-screen pt-16">
+      <div className="flex flex-1 h-screen pt-16">
         {/* Sidebar */}
         <Sidebar
           accounts={storageInfo.accounts}
@@ -434,12 +480,22 @@ const Dashboard = ({ onVaultLock }) => {
         />
 
         {/* Main Area */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
           {/* Storage Overview */}
           <StorageOverview storageInfo={storageInfo} />
 
+          {/* Account Recovery Banner (for restored vaults) */}
+          {showAccountRecovery && (
+            <div className="px-6">
+              <AccountRecoveryBanner
+                onAddAccount={handleAddAccount}
+                onDismiss={() => setShowAccountRecovery(false)}
+              />
+            </div>
+          )}
+
           {/* File Area with Enhanced Info */}
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-auto bg-gray-50">
             <FileArea
               files={files}
               fileStatistics={fileStatistics}

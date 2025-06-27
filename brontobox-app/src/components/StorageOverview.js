@@ -1,6 +1,7 @@
 // src/components/StorageOverview.js
 import React from 'react';
 import { motion } from 'framer-motion';
+import BrontoBoxLogo, { BrontoBoxFavicon, BrontoBoxSmall, BrontoBoxMedium, BrontoBoxLarge, BrontoBoxXL } from './BrontoBoxLogo';
 
 const StorageOverview = ({ storageInfo }) => {
   const getStorageSegments = () => {
@@ -18,7 +19,7 @@ const StorageOverview = ({ storageInfo }) => {
       const accountCapacity = account.storage_info?.total_gb || 15;
       const accountUsed = account.storage_info?.used_gb || 0;
       const accountAvailable = accountCapacity - accountUsed;
-      
+
       totalCapacity += accountCapacity;
 
       // Used storage segment
@@ -65,9 +66,10 @@ const StorageOverview = ({ storageInfo }) => {
   return (
     <div className="bg-white mx-6 mt-6 rounded-lg shadow-lg p-6">
       <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
-        🦕 BrontoBox Storage Distribution
+        <BrontoBoxMedium className="mr-2" />
+        BrontoBox Storage Distribution
       </h2>
-      
+
       {/* Storage Chart */}
       <div className="flex h-20 bg-gray-100 rounded-lg overflow-hidden mb-4">
         {segments.map((segment, index) => (
@@ -121,7 +123,7 @@ const StorageOverview = ({ storageInfo }) => {
       {storageInfo.total_accounts < 4 && (
         <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
           <p className="text-sm text-blue-800">
-            💡 <strong>Tip:</strong> Add {4 - storageInfo.total_accounts} more Google account{4 - storageInfo.total_accounts > 1 ? 's' : ''} 
+            💡 <strong>Tip:</strong> Add {4 - storageInfo.total_accounts} more Google account{4 - storageInfo.total_accounts > 1 ? 's' : ''}
             to unlock {(4 - storageInfo.total_accounts) * 15}GB additional storage capacity!
           </p>
         </div>

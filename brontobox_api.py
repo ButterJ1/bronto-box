@@ -49,6 +49,11 @@ class FileUploadResponse(BaseModel):
     accounts_used: List[str]
     upload_time: str
 
+class RestoreRequest(BaseModel):
+    vault_backup_file: str
+    registry_backup_file: Optional[str] = None
+    master_password: str
+
 class StorageInfo(BaseModel):
     total_accounts: int
     total_capacity_gb: float
@@ -1770,6 +1775,931 @@ async def get_system_info():
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+# Vault Restore & Import Endpoints
+
+@app.get("/backup/detect")
+async def detect_backup_files():
+    """
+    🔍 Auto-detect backup files in the current directory
+    """
+    try:
+        current_dir = os.getcwd()
+        detected_backups = {
+            "vault_backups": [],
+            "registry_backups": [],
+            "directory": current_dir
+        }
+        
+        print(f"🔍 Scanning directory: {current_dir}")
+        
+        # Scan for backup files with flexible pattern matching
+        for filename in os.listdir(current_dir):
+            print(f"📄 Checking file: {filename}")
+            
+            # Check for vault backup files (both patterns)
+            is_vault_backup = (
+                filename.startswith("brontobox_vault_backup") and filename.endswith(".json")
+            )
+            
+            # Check for registry backup files (both patterns)  
+            is_registry_backup = (
+                filename.startswith("brontobox_file_registry") and filename.endswith(".json")
+            )
+            
+            if is_vault_backup:
+                try:
+                    with open(filename, 'r') as f:
+                        backup_data = json.load(f)
+                    
+                    if backup_data.get("backup_type") == "brontobox_vault_info":
+                        detected_backups["vault_backups"].append({
+                            "filename": filename,
+                            "vault_id": backup_data.get("vault_id"),
+                            "created_at": backup_data.get("created_at"),
+                            "exported_at": backup_data.get("exported_at"),
+                            "file_path": os.path.join(current_dir, filename)
+                        })
+                        print(f"✅ Detected vault backup: {filename}")
+                    else:
+                        print(f"⚠️ File {filename} is not a valid vault backup")
+                except Exception as e:
+                    print(f"⚠️ Could not read vault backup file {filename}: {e}")
+            
+            elif is_registry_backup:
+                try:
+                    with open(filename, 'r') as f:
+                        registry_data = json.load(f)
+                    
+                    if registry_data.get("export_type") == "brontobox_file_registry":
+                        detected_backups["registry_backups"].append({
+                            "filename": filename,
+                            "vault_id": registry_data.get("vault_id"),
+                            "total_files": registry_data.get("total_files"),
+                            "exported_at": registry_data.get("exported_at"),
+                            "file_path": os.path.join(current_dir, filename)
+                        })
+                        print(f"✅ Detected registry backup: {filename}")
+                    else:
+                        print(f"⚠️ File {filename} is not a valid registry backup")
+                except Exception as e:
+                    print(f"⚠️ Could not read registry backup file {filename}: {e}")
+        
+        print(f"🔍 Detection complete: {len(detected_backups['vault_backups'])} vault, {len(detected_backups['registry_backups'])} registry")
+        
+        return {
+            "success": True,
+            "detected_backups": detected_backups,
+            "vault_count": len(detected_backups["vault_backups"]),
+            "registry_count": len(detected_backups["registry_backups"])
+        }
+        
+    except Exception as e:
+        print(f"❌ Backup detection failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "detected_backups": {"vault_backups": [], "registry_backups": []}
+        }
+
+@app.post("/vault/restore-from-backup")
+async def restore_vault_from_backup(backup_file: str, master_password: str):
+    """
+    🔧 Restore vault from backup file
+    Uses backup file + master password to recreate vault access
+    """
+    try:
+        # Read backup file
+        if not os.path.exists(backup_file):
+            raise HTTPException(status_code=404, detail="Backup file not found")
+        
+        with open(backup_file, 'r') as f:
+            backup_data = json.load(f)
+        
+        # Validate backup file
+        if backup_data.get("backup_type") != "brontobox_vault_info":
+            raise HTTPException(status_code=400, detail="Invalid backup file format")
+        
+        vault_id = backup_data["vault_id"]
+        salt = backup_data["salt"]
+        verification_data = backup_data["verification_data"]
+        
+        print(f"🔧 Restoring vault from backup: {vault_id}")
+        
+        # Initialize vault with backup data
+        vault = VaultCore()
+        
+        # Try to unlock with provided password and backed up salt/verification
+        success = vault.unlock_vault(master_password, salt, verification_data)
+        
+        if not success:
+            raise HTTPException(status_code=401, detail="Invalid master password for this vault backup")
+        
+        # Initialize auth manager and storage manager
+        auth_manager = GoogleAuthManager(vault)
+        storage_manager = BrontoBoxStorageManager(vault, auth_manager)
+        
+        # Store in global state
+        app_state["vault"] = vault
+        app_state["auth_manager"] = auth_manager
+        app_state["storage_manager"] = storage_manager
+        app_state["vault_unlocked"] = True
+        
+        # Add vault back to registry
+        vault_data = {
+            "vault_id": vault_id,
+            "salt": salt,
+            "verification_data": verification_data,
+            "created_at": backup_data.get("created_at", datetime.now().isoformat()),
+            "version": backup_data.get("version", "1.0")
+        }
+        
+        save_vault_to_registry(vault_id, vault_data)
+        
+        print(f"✅ Vault restored successfully: {vault_id}")
+        
+        await manager.broadcast({
+            "type": "vault_restored",
+            "data": {"vault_id": vault_id, "status": "Vault restored from backup"}
+        })
+        
+        return {
+            "success": True,
+            "message": "Vault restored successfully from backup",
+            "vault_id": vault_id,
+            "created_at": backup_data.get("created_at"),
+            "note": "You can now import your file registry to restore your files"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to restore vault: {str(e)}")
+
+@app.post("/data/import-registry-from-file")
+async def import_registry_from_file(registry_file: str):
+    """
+    📥 Import file registry from local backup file
+    Automatically loads registry from detected backup file
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        # Read registry file
+        if not os.path.exists(registry_file):
+            raise HTTPException(status_code=404, detail="Registry file not found")
+        
+        with open(registry_file, 'r') as f:
+            import_data = json.load(f)
+        
+        # Validate registry file
+        if import_data.get("export_type") != "brontobox_file_registry":
+            raise HTTPException(status_code=400, detail="Invalid registry file format")
+        
+        storage_manager = app_state["storage_manager"]
+        vault = app_state["vault"]
+        
+        if not storage_manager or not vault:
+            raise HTTPException(status_code=500, detail="Storage manager or vault not initialized")
+        
+        # Check vault compatibility
+        imported_vault_id = import_data.get("vault_id")
+        current_vault_id = vault.vault_id
+        
+        if imported_vault_id != current_vault_id:
+            print(f"⚠️ Warning: Importing registry from different vault ({imported_vault_id} → {current_vault_id})")
+        
+        # Load the encrypted registry
+        encrypted_registry = import_data["encrypted_registry"]
+        success = storage_manager.load_file_registry(encrypted_registry)
+        
+        if success:
+            files_imported = len(storage_manager.stored_files)
+            
+            # Auto-save the imported registry to vault-specific file
+            save_file_registry_to_disk()
+            
+            print(f"✅ Registry imported: {files_imported} files loaded")
+            
+            await manager.broadcast({
+                "type": "registry_imported",
+                "data": {"files_imported": files_imported}
+            })
+            
+            return {
+                "success": True,
+                "message": "File registry imported successfully",
+                "files_imported": files_imported,
+                "imported_from_vault": imported_vault_id,
+                "imported_at": import_data.get("exported_at")
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Failed to decrypt imported registry - vault keys may be incompatible")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to import registry: {str(e)}")
+
+@app.get("/restore/analyze-missing-accounts")
+async def analyze_missing_accounts():
+    """
+    🔍 Analyze which accounts are needed for file access after restore
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        auth_manager = app_state["auth_manager"]
+        
+        if not storage_manager:
+            raise HTTPException(status_code=500, detail="Storage manager not initialized")
+        
+        # Get currently connected accounts
+        connected_accounts = set()
+        if auth_manager:
+            accounts = auth_manager.list_accounts()
+            connected_accounts = {acc['account_id'] for acc in accounts if acc['is_active']}
+        
+        # Analyze all files to find required accounts
+        required_accounts = set()
+        file_account_map = {}
+        inaccessible_files = []
+        
+        for file_id, stored_file in storage_manager.stored_files.items():
+            file_accounts = set()
+            for chunk in stored_file.chunks:
+                account_id = chunk['drive_account']
+                required_accounts.add(account_id)
+                file_accounts.add(account_id)
+            
+            file_account_map[file_id] = {
+                'file_name': stored_file.original_name,
+                'required_accounts': list(file_accounts),
+                'accessible_accounts': list(file_accounts & connected_accounts),
+                'missing_accounts': list(file_accounts - connected_accounts),
+                'is_accessible': file_accounts.issubset(connected_accounts)
+            }
+            
+            if not file_accounts.issubset(connected_accounts):
+                inaccessible_files.append({
+                    'file_id': file_id,
+                    'file_name': stored_file.original_name,
+                    'missing_accounts': list(file_accounts - connected_accounts)
+                })
+        
+        missing_accounts = required_accounts - connected_accounts
+        
+        return {
+            "success": True,
+            "analysis": {
+                "total_files": len(storage_manager.stored_files),
+                "total_required_accounts": len(required_accounts),
+                "connected_accounts": len(connected_accounts),
+                "missing_accounts": len(missing_accounts),
+                "inaccessible_files": len(inaccessible_files),
+                "accessibility_percentage": round((len(storage_manager.stored_files) - len(inaccessible_files)) / len(storage_manager.stored_files) * 100, 1) if storage_manager.stored_files else 100
+            },
+            "details": {
+                "connected_account_ids": list(connected_accounts),
+                "missing_account_ids": list(missing_accounts),
+                "inaccessible_files": inaccessible_files[:10],  # Show first 10
+                "file_accessibility": file_account_map
+            },
+            "recommendations": [
+                f"Add {len(missing_accounts)} missing Google account(s) to access all files",
+                "Use the same Google accounts you used when originally uploading files",
+                "Look for existing .brontobox_storage folders in your Google Drives"
+            ] if missing_accounts else [
+                "All required accounts are connected! Files should be accessible."
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+@app.post("/restore/complete-restoration")
+async def complete_restoration(request: RestoreRequest):
+    """
+    🎯 COMPLETE RESTORATION: Restore vault + import registry in one operation
+    """
+    try:
+        print(f"🚀 Starting complete restoration...")
+        print(f"📁 Vault backup: {request.vault_backup_file}")
+        print(f"📁 Registry backup: {request.registry_backup_file}")
+        
+        # Step 1: Restore vault from backup
+        print(f"🔧 Step 1: Restoring vault from {request.vault_backup_file}")
+        
+        # Read and validate vault backup
+        if not os.path.exists(request.vault_backup_file):
+            raise HTTPException(status_code=404, detail="Vault backup file not found")
+        
+        with open(request.vault_backup_file, 'r') as f:
+            backup_data = json.load(f)
+        
+        if backup_data.get("backup_type") != "brontobox_vault_info":
+            raise HTTPException(status_code=400, detail="Invalid vault backup file")
+        
+        vault_id = backup_data["vault_id"]
+        salt = backup_data["salt"]
+        verification_data = backup_data["verification_data"]
+        
+        # Initialize and unlock vault
+        vault = VaultCore()
+        success = vault.unlock_vault(request.master_password, salt, verification_data)
+        
+        if not success:
+            raise HTTPException(status_code=401, detail="Invalid master password for vault backup")
+        
+        # Initialize managers
+        auth_manager = GoogleAuthManager(vault)
+        storage_manager = BrontoBoxStorageManager(vault, auth_manager)
+        
+        # Store in global state
+        app_state["vault"] = vault
+        app_state["auth_manager"] = auth_manager
+        app_state["storage_manager"] = storage_manager
+        app_state["vault_unlocked"] = True
+        
+        # Add vault to registry
+        vault_data = {
+            "vault_id": vault_id,
+            "salt": salt,
+            "verification_data": verification_data,
+            "created_at": backup_data.get("created_at", datetime.now().isoformat()),
+            "version": backup_data.get("version", "1.0")
+        }
+        save_vault_to_registry(vault_id, vault_data)
+        
+        print(f"✅ Step 1 complete: Vault {vault_id} restored")
+        
+        # Step 2: Import file registry (if provided)
+        files_imported = 0
+        if request.registry_backup_file and os.path.exists(request.registry_backup_file):
+            print(f"📥 Step 2: Importing registry from {request.registry_backup_file}")
+            
+            with open(request.registry_backup_file, 'r') as f:
+                registry_data = json.load(f)
+            
+            if registry_data.get("export_type") == "brontobox_file_registry":
+                encrypted_registry = registry_data["encrypted_registry"]
+                registry_success = storage_manager.load_file_registry(encrypted_registry)
+                
+                if registry_success:
+                    files_imported = len(storage_manager.stored_files)
+                    save_file_registry_to_disk()
+                    print(f"✅ Step 2 complete: {files_imported} files imported")
+                else:
+                    print(f"⚠️ Step 2 warning: Could not decrypt registry (vault mismatch?)")
+        
+        await manager.broadcast({
+            "type": "complete_restoration",
+            "data": {
+                "vault_id": vault_id,
+                "files_imported": files_imported,
+                "status": "Complete restoration successful"
+            }
+        })
+        
+        return {
+            "success": True,
+            "message": "Complete restoration successful!",
+            "restoration_summary": {
+                "vault_id": vault_id,
+                "vault_restored": True,
+                "files_imported": files_imported,
+                "registry_restored": files_imported > 0,
+                "ready_to_use": True
+            },
+            "next_steps": [
+                "Add your Google accounts to access files",
+                "Run file discovery to find existing files",
+                "Your BrontoBox is ready to use!"
+            ]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Complete restoration failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Complete restoration failed: {str(e)}")
+
+@app.get("/restore/check-compatibility") 
+async def check_backup_compatibility(vault_backup: str, registry_backup: str = None):
+    """
+    🔍 Check if backup files are compatible with each other
+    Validates backup files before attempting restoration
+    """
+    try:
+        compatibility_info = {
+            "vault_backup": {"valid": False, "details": {}},
+            "registry_backup": {"valid": False, "details": {}},
+            "compatible": False,
+            "issues": []
+        }
+        
+        # Check vault backup
+        if os.path.exists(vault_backup):
+            try:
+                with open(vault_backup, 'r') as f:
+                    vault_data = json.load(f)
+                
+                if vault_data.get("backup_type") == "brontobox_vault_info":
+                    compatibility_info["vault_backup"]["valid"] = True
+                    compatibility_info["vault_backup"]["details"] = {
+                        "vault_id": vault_data.get("vault_id"),
+                        "created_at": vault_data.get("created_at"),
+                        "version": vault_data.get("version", "1.0")
+                    }
+                else:
+                    compatibility_info["issues"].append("Vault backup file has invalid format")
+            except Exception as e:
+                compatibility_info["issues"].append(f"Cannot read vault backup: {str(e)}")
+        else:
+            compatibility_info["issues"].append("Vault backup file not found")
+        
+        # Check registry backup (optional)
+        if registry_backup and os.path.exists(registry_backup):
+            try:
+                with open(registry_backup, 'r') as f:
+                    registry_data = json.load(f)
+                
+                if registry_data.get("export_type") == "brontobox_file_registry":
+                    compatibility_info["registry_backup"]["valid"] = True
+                    compatibility_info["registry_backup"]["details"] = {
+                        "vault_id": registry_data.get("vault_id"),
+                        "total_files": registry_data.get("total_files"),
+                        "exported_at": registry_data.get("exported_at")
+                    }
+                    
+                    # Check if vault IDs match
+                    vault_id = compatibility_info["vault_backup"]["details"].get("vault_id")
+                    registry_vault_id = registry_data.get("vault_id")
+                    
+                    if vault_id != registry_vault_id:
+                        compatibility_info["issues"].append(f"Vault ID mismatch: vault={vault_id}, registry={registry_vault_id}")
+                else:
+                    compatibility_info["issues"].append("Registry backup file has invalid format")
+            except Exception as e:
+                compatibility_info["issues"].append(f"Cannot read registry backup: {str(e)}")
+        
+        # Determine overall compatibility
+        compatibility_info["compatible"] = (
+            compatibility_info["vault_backup"]["valid"] and 
+            len(compatibility_info["issues"]) == 0
+        )
+        
+        return {
+            "success": True,
+            "compatibility": compatibility_info
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "compatibility": None
+        }
+
+@app.post("/restore/fix-account-mapping")
+async def fix_account_mapping():
+    """
+    🔧 Fix account ID mismatches after restore
+    Maps old account IDs in file metadata to current account IDs
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        auth_manager = app_state["auth_manager"]
+        
+        if not storage_manager or not auth_manager:
+            raise HTTPException(status_code=500, detail="Managers not initialized")
+        
+        # Get current accounts
+        current_accounts = auth_manager.list_accounts()
+        current_emails = {acc['email']: acc['account_id'] for acc in current_accounts if acc['is_active']}
+        
+        print(f"🔧 Current accounts: {list(current_emails.keys())}")
+        
+        # Get all old account IDs from file metadata
+        old_account_ids = set()
+        for stored_file in storage_manager.stored_files.values():
+            for chunk in stored_file.chunks:
+                old_account_ids.add(chunk['drive_account'])
+        
+        print(f"📋 Old account IDs in files: {list(old_account_ids)}")
+        
+        # Try to map old account IDs to current ones
+        # Strategy: Check if chunks actually exist in current accounts
+        account_mapping = {}
+        chunks_remapped = 0
+        
+        for old_account_id in old_account_ids:
+            best_match = None
+            
+            # Try each current account to see if it has chunks for this old account
+            for email, current_account_id in current_emails.items():
+                try:
+                    # Try to list chunks in this account to see if it has old data
+                    chunks = storage_manager.drive_client.list_chunks(current_account_id)
+                    
+                    # Check if any chunks match what we expect from the old account
+                    has_matching_chunks = False
+                    for stored_file in storage_manager.stored_files.values():
+                        for chunk_info in stored_file.chunks:
+                            if chunk_info['drive_account'] == old_account_id:
+                                # Look for this chunk in the current account
+                                drive_file_id = chunk_info['drive_file_id']
+                                matching_chunk = next((c for c in chunks if c.file_id == drive_file_id), None)
+                                if matching_chunk:
+                                    has_matching_chunks = True
+                                    break
+                        if has_matching_chunks:
+                            break
+                    
+                    if has_matching_chunks:
+                        best_match = current_account_id
+                        print(f"✅ Mapped {old_account_id} → {current_account_id} ({email})")
+                        break
+                        
+                except Exception as e:
+                    print(f"⚠️ Could not check account {current_account_id}: {e}")
+                    continue
+            
+            if best_match:
+                account_mapping[old_account_id] = best_match
+            else:
+                print(f"❌ No match found for old account {old_account_id}")
+        
+        # Apply the mapping to all files
+        if account_mapping:
+            print(f"🔄 Applying account mapping: {account_mapping}")
+            
+            for stored_file in storage_manager.stored_files.values():
+                for chunk in stored_file.chunks:
+                    old_id = chunk['drive_account']
+                    if old_id in account_mapping:
+                        chunk['drive_account'] = account_mapping[old_id]
+                        chunks_remapped += 1
+                
+                # Update metadata
+                if 'accounts_used' in stored_file.metadata:
+                    new_accounts = []
+                    for old_id in stored_file.metadata['accounts_used']:
+                        new_accounts.append(account_mapping.get(old_id, old_id))
+                    stored_file.metadata['accounts_used'] = new_accounts
+            
+            # Save the updated file registry
+            save_file_registry_to_disk()
+            
+            print(f"✅ Account mapping complete: {chunks_remapped} chunks remapped")
+            
+            await manager.broadcast({
+                "type": "account_mapping_fixed",
+                "data": {"chunks_remapped": chunks_remapped, "mapping": account_mapping}
+            })
+            
+            return {
+                "success": True,
+                "message": "Account mapping fixed successfully",
+                "account_mapping": account_mapping,
+                "chunks_remapped": chunks_remapped,
+                "old_accounts": list(old_account_ids),
+                "current_accounts": list(current_emails.keys())
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No account mapping could be established",
+                "old_accounts": list(old_account_ids),
+                "current_accounts": list(current_emails.keys()),
+                "suggestion": "Make sure you've added the same Google accounts you used originally"
+            }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Account mapping failed: {str(e)}")
+
+@app.post("/restore/guide-account-recovery")
+async def guide_account_recovery():
+    """
+    🧭 Provide step-by-step guidance for account recovery after restore
+    """
+    try:
+        # Get missing account analysis
+        analysis_response = await analyze_missing_accounts()
+        analysis = analysis_response["analysis"]
+        details = analysis_response["details"]
+        
+        # Generate personalized guidance
+        steps = []
+        
+        if analysis["missing_accounts"] > 0:
+            steps.extend([
+                {
+                    "step": 1,
+                    "title": "Add Missing Google Accounts",
+                    "description": f"You need to re-authenticate {analysis['missing_accounts']} Google account(s)",
+                    "action": "Click 'Add Account' in the sidebar",
+                    "details": f"Missing accounts: {', '.join(details['missing_account_ids'][:3])}{'...' if len(details['missing_account_ids']) > 3 else ''}"
+                },
+                {
+                    "step": 2,
+                    "title": "Use the Same Google Accounts",
+                    "description": "Authenticate the same Google accounts you used originally",
+                    "action": "Sign in with the Google accounts that have your files",
+                    "details": "Look for accounts that contain .brontobox_storage folders"
+                },
+                {
+                    "step": 3,
+                    "title": "Verify File Access",
+                    "description": "Once accounts are added, your files should become downloadable",
+                    "action": "Try downloading a file to test",
+                    "details": f"{analysis['inaccessible_files']} files are currently inaccessible"
+                }
+            ])
+        else:
+            steps.append({
+                "step": 1,
+                "title": "All Accounts Connected!",
+                "description": "All required Google accounts are connected",
+                "action": "Your files should be accessible for download",
+                "details": f"{analysis['total_files']} files are ready to download"
+            })
+        
+        return {
+            "success": True,
+            "recovery_guide": {
+                "current_status": f"{analysis['accessibility_percentage']}% of files are accessible",
+                "accounts_needed": analysis["missing_accounts"],
+                "files_affected": analysis["inaccessible_files"],
+                "steps": steps
+            },
+            "quick_actions": [
+                {
+                    "action": "add_account",
+                    "label": "Add Google Account",
+                    "endpoint": "/accounts/authenticate",
+                    "urgent": analysis["missing_accounts"] > 0
+                },
+                {
+                    "action": "test_download",
+                    "label": "Test File Download", 
+                    "endpoint": "/files/{file_id}/download",
+                    "urgent": False
+                }
+            ]
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recovery guide failed: {str(e)}")
+
+@app.get("/restore/status")
+async def get_restore_status():
+    """
+    📊 Get current restoration status including account connectivity
+    """
+    if not app_state["vault_unlocked"]:
+        return {"unlocked": False, "restoration_complete": False}
+    
+    try:
+        # Check if this appears to be a restored vault
+        vault = app_state["vault"]
+        storage_manager = app_state["storage_manager"]
+        auth_manager = app_state["auth_manager"]
+        
+        is_likely_restored = False
+        has_imported_files = False
+        
+        if storage_manager:
+            # Check if we have files marked as imported
+            for stored_file in storage_manager.stored_files.values():
+                if stored_file.metadata.get('imported_from_registry'):
+                    is_likely_restored = True
+                    has_imported_files = True
+                    break
+        
+        # Get account analysis if we have imported files
+        account_analysis = None
+        if has_imported_files:
+            try:
+                analysis_response = await analyze_missing_accounts()
+                account_analysis = analysis_response["analysis"]
+            except:
+                pass
+        
+        return {
+            "unlocked": True,
+            "is_likely_restored": is_likely_restored,
+            "has_imported_files": has_imported_files,
+            "vault_id": vault.vault_id if vault else None,
+            "account_analysis": account_analysis,
+            "restoration_complete": account_analysis["accessibility_percentage"] == 100 if account_analysis else True,
+            "needs_account_setup": account_analysis["missing_accounts"] > 0 if account_analysis else False
+        }
+        
+    except Exception as e:
+        return {
+            "unlocked": True,
+            "error": str(e),
+            "restoration_complete": False
+        }
+
+@app.post("/restore/validate-password")
+async def validate_restore_password(request: RestoreRequest):
+    """
+    🔐 Validate master password for vault backup WITHOUT doing full restoration
+    This prevents misleading users with wrong passwords
+    """
+    try:
+        print(f"🔐 Validating password for vault backup: {request.vault_backup_file}")
+        
+        # Read and validate vault backup
+        if not os.path.exists(request.vault_backup_file):
+            raise HTTPException(status_code=404, detail="Vault backup file not found")
+        
+        with open(request.vault_backup_file, 'r') as f:
+            backup_data = json.load(f)
+        
+        if backup_data.get("backup_type") != "brontobox_vault_info":
+            raise HTTPException(status_code=400, detail="Invalid vault backup file")
+        
+        vault_id = backup_data["vault_id"]
+        salt = backup_data["salt"]
+        verification_data = backup_data["verification_data"]
+        
+        # Create temporary vault instance for validation only
+        temp_vault = VaultCore()
+        
+        # Try to unlock with provided password and backed up salt/verification
+        success = temp_vault.unlock_vault(request.master_password, salt, verification_data)
+        
+        if not success:
+            print(f"❌ Password validation failed for vault {vault_id}")
+            raise HTTPException(status_code=401, detail="Invalid master password for this vault backup")
+        
+        print(f"✅ Password validation successful for vault {vault_id}")
+        
+        # Immediately lock the temp vault (we don't want to keep it unlocked)
+        temp_vault.lock_vault()
+        
+        return {
+            "success": True,
+            "message": "Password validated successfully",
+            "vault_id": vault_id,
+            "validation_timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Password validation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Password validation failed: {str(e)}")
+
+@app.get("/debug/file/{file_id}")
+async def debug_file_info(file_id: str):
+    """Debug endpoint to check file metadata and download capability"""
+    if not app_state["vault_unlocked"]:
+        return {"error": "Vault not unlocked"}
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        if not storage_manager:
+            return {"error": "Storage manager not initialized"}
+        
+        if file_id not in storage_manager.stored_files:
+            return {"error": f"File {file_id} not found"}
+        
+        stored_file = storage_manager.stored_files[file_id]
+        
+        # Check chunk accessibility
+        accessible_chunks = 0
+        chunk_details = []
+        
+        for chunk_info in stored_file.chunks:
+            try:
+                # Try to get chunk info without downloading
+                drive_account = chunk_info['drive_account']
+                drive_file_id = chunk_info['drive_file_id']
+                
+                # Check if account exists
+                auth_manager = app_state["auth_manager"]
+                account_exists = drive_account in [acc['account_id'] for acc in auth_manager.list_accounts()]
+                
+                chunk_details.append({
+                    "chunk_index": chunk_info['chunk_index'],
+                    "drive_account": drive_account,
+                    "drive_file_id": drive_file_id,
+                    "account_accessible": account_exists,
+                    "chunk_size": chunk_info.get('chunk_size', 'unknown')
+                })
+                
+                if account_exists:
+                    accessible_chunks += 1
+                    
+            except Exception as e:
+                chunk_details.append({
+                    "chunk_index": chunk_info.get('chunk_index', 'unknown'),
+                    "error": str(e)
+                })
+        
+        return {
+            "file_id": file_id,
+            "file_name": stored_file.original_name,
+            "file_size": stored_file.original_size,
+            "total_chunks": len(stored_file.chunks),
+            "accessible_chunks": accessible_chunks,
+            "metadata": {
+                "discovered_from_chunks": stored_file.metadata.get('discovered_from_chunks', False),
+                "imported_from_registry": stored_file.metadata.get('imported_from_registry', False),
+                "has_encrypted_manifest": 'encrypted_manifest' in stored_file.metadata,
+                "has_chunk_size": 'chunk_size' in stored_file.metadata,
+                "accounts_used": stored_file.metadata.get('accounts_used', [])
+            },
+            "chunk_details": chunk_details,
+            "download_feasible": accessible_chunks == len(stored_file.chunks),
+            "recommended_method": "normal" if 'encrypted_manifest' in stored_file.metadata else "reconstruction"
+        }
+        
+    except Exception as e:
+        return {"error": f"Debug failed: {str(e)}"}
+
+@app.get("/debug/files")
+async def debug_files():
+    """Debug endpoint to check file detection"""
+    import os
+    current_dir = os.getcwd()
+    files = os.listdir(current_dir)
+    
+    vault_files = [f for f in files if f.startswith("brontobox_vault_backup")]
+    registry_files = [f for f in files if f.startswith("brontobox_file_registry")]
+    
+    return {
+        "directory": current_dir,
+        "all_files": files,
+        "vault_files": vault_files,
+        "registry_files": registry_files
+    }
+
+@app.get("/debug/account-comparison")
+async def debug_account_comparison():
+    """
+    🔍 Compare old account IDs vs current account IDs for debugging
+    """
+    if not app_state["vault_unlocked"]:
+        return {"error": "Vault not unlocked"}
+    
+    try:
+        storage_manager = app_state["storage_manager"]
+        auth_manager = app_state["auth_manager"]
+        
+        # Current accounts
+        current_accounts = auth_manager.list_accounts() if auth_manager else []
+        current_account_info = [
+            {
+                "account_id": acc['account_id'],
+                "email": acc['email'],
+                "is_active": acc['is_active']
+            }
+            for acc in current_accounts
+        ]
+        
+        # Old account IDs from files
+        old_account_ids = set()
+        file_account_details = {}
+        
+        if storage_manager:
+            for file_id, stored_file in storage_manager.stored_files.items():
+                file_accounts = []
+                for chunk in stored_file.chunks:
+                    old_account_id = chunk['drive_account']
+                    old_account_ids.add(old_account_id)
+                    file_accounts.append({
+                        "chunk_index": chunk['chunk_index'],
+                        "old_account_id": old_account_id,
+                        "drive_file_id": chunk['drive_file_id']
+                    })
+                
+                file_account_details[file_id] = {
+                    "file_name": stored_file.original_name,
+                    "chunks": file_accounts
+                }
+        
+        return {
+            "current_accounts": current_account_info,
+            "old_account_ids": list(old_account_ids),
+            "file_account_details": file_account_details,
+            "mismatch_detected": len(old_account_ids) > 0 and not any(
+                acc['account_id'] in old_account_ids for acc in current_accounts
+            )
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
