@@ -1,7 +1,8 @@
 {
   "name": "brontobox",
   "version": "1.0.0",
-  "description": "🦕 BrontoBox - Secure Distributed Storage",
+  "description": "BrontoBox - Secure Distributed Storage",
+  "author": "ButterJ1",
   "main": "public/electron.js",
   "homepage": "./",
   "private": true,
@@ -14,7 +15,8 @@
     "react-dropzone": "^14.2.3",
     "react-router-dom": "^6.17.0",
     "react-scripts": "5.0.1",
-    "recharts": "^2.8.0"
+    "recharts": "^2.8.0",
+    "electron-is-dev": "^2.0.0"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.6",
@@ -22,12 +24,12 @@
     "concurrently": "^8.2.0",
     "cross-env": "^7.0.3",
     "electron": "^27.0.0",
-    "electron-builder": "^24.6.4",
-    "electron-is-dev": "^2.0.0",
+    "electron-builder": "^24.13.3",
     "postcss": "^8.4.31",
     "postcss-import": "^16.1.1",
     "tailwindcss": "^3.4.17",
-    "wait-on": "^7.2.0"
+    "wait-on": "^7.2.0",
+    "rimraf": "^5.0.0"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -36,34 +38,113 @@
     "eject": "react-scripts eject",
     "electron": "electron .",
     "electron-dev": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && electron .\"",
-    "build-electron": "npm run build && electron-builder",
-    "dist": "npm run build && electron-builder --publish=never",
-    "pack": "npm run build && electron-builder --dir"
+    "clean": "rimraf build dist python-dist",
+    "build-react": "npm run build",
+    "build-python": "pyinstaller --onefile --name brontobox_api --distpath ./python-dist ../brontobox_api.py",
+    "prebuild-electron": "npm run clean && npm run build-react && npm run build-python",
+    "build-electron": "electron-builder",
+    "build-all": "npm run prebuild-electron && npm run build-electron",
+    "dist": "npm run build-all",
+    "pack": "npm run prebuild-electron && electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps"
   },
   "build": {
     "appId": "com.brontobox.app",
     "productName": "BrontoBox",
+    "copyright": "Copyright © 2024 BrontoBox",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "assets"
     },
     "files": [
       "build/**/*",
       "public/electron.js",
       "public/preload.js",
-      "node_modules/**/*"
+      "public/favicon256.ico",
+      "node_modules/**/*",
+      "!node_modules/.cache",
+      "!node_modules/electron/**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+    ],
+    "extraResources": [
+      {
+        "from": "python-dist/",
+        "to": "python/",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../credentials.json",
+        "to": "python/credentials.json",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../../",
+        "to": "python/",
+        "filter": ["*.py", "!**/__pycache__/**/*", "!**/build/**/*", "!**/dist/**/*"]
+      }
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "target": "dmg"
+      "target": {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      },
+      "icon": "assets/icon.icns",
+      "entitlementsInherit": "assets/entitlements.mac.plist",
+      "hardenedRuntime": false
     },
     "win": {
-      "target": "nsis",
-      "icon": "public/favicon.ico"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64", "ia32"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "ia32"]
+        }
+      ],
+      "icon": "public/favicon256.ico",
+      "publisherName": "BrontoBox",
+      "verifyUpdateCodeSignature": false
     },
     "linux": {
-      "target": "AppImage",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "tar.gz",
+          "arch": ["x64"]
+        }
+      ],
       "category": "Utility",
       "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BrontoBox"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "brontobox",
+      "repo": "brontobox"
     }
   },
   "browserslist": {
