@@ -1,7 +1,7 @@
-# google_auth.py - OAUTH STATE MISMATCH FIX
+# google_auth.py - OAUTH STATE MISMATCH FIX + STORAGE QUOTA FIX
 """
-VaultDrive Google OAuth Authentication Manager - FIXED VERSION
-Handles Google OAuth2 flows, token management, and secure storage
+VaultDrive Google OAuth Authentication Manager - COMPLETE FIXED VERSION
+Handles Google OAuth2 flows, token management, secure storage, and correct storage quota calculation
 """
 
 import os
@@ -329,18 +329,161 @@ class GoogleAuthManager:
         
         account.credentials_encrypted = encrypted_credentials
     
+    def _detect_workspace_account(self, limit_bytes, usage_bytes, user_info) -> bool:
+        """
+        Detect if this is a workspace/school account based on storage patterns
+        """
+        # Check 1: Extremely large storage (>100TB) indicates organizational storage
+        if limit_bytes and int(limit_bytes) > 100 * 1024 * 1024 * 1024 * 1024:  # 100TB
+            return True
+        
+        # Check 2: Very large usage but small Drive usage indicates pooled storage
+        if usage_bytes > 50 * 1024 * 1024 * 1024 * 1024:  # 50TB total usage
+            return True
+        
+        # Check 3: Email domain check (if available)
+        email = user_info.get('emailAddress', '')
+        if email and not email.endswith('@gmail.com'):
+            # Custom domain usually means workspace
+            return True
+        
+        return False
+    
+    def _handle_workspace_account(self, account_id: str, storage_quota: dict, user_info: dict) -> Dict[str, Any]:
+        """
+        Handle workspace accounts - show only Drive usage and add warnings
+        """
+        usage_in_drive_bytes = int(storage_quota.get('usageInDrive', 0))
+        usage_in_drive_gb = usage_in_drive_bytes / (1024 ** 3)
+        
+        # For workspace accounts, we can't know the real individual quota
+        # So we estimate based on Drive usage or use a reasonable default
+        estimated_quota_gb = max(15.0, usage_in_drive_gb * 2)  # At least 15GB or 2x current usage
+        available_gb = estimated_quota_gb - usage_in_drive_gb
+        
+        email = user_info.get('emailAddress', 'Unknown')
+        domain = email.split('@')[1] if '@' in email else 'Unknown'
+        
+        print(f"📊 Workspace account {account_id} ({email}):")
+        print(f"   Drive usage: {usage_in_drive_gb:.3f}GB")
+        print(f"   Estimated quota: {estimated_quota_gb:.1f}GB")
+        print(f"   Domain: {domain}")
+        
+        return {
+            'total_gb': estimated_quota_gb,
+            'used_gb': usage_in_drive_gb,  # Only count Drive usage
+            'available_gb': max(available_gb, 1.0),  # Always show some available space
+            'account_type': 'workspace',
+            'organization_domain': domain,
+            'drive_usage_only': True,
+            'warning_message': f'Google Workspace account ({domain})',
+            'recommendation': 'For best experience, connect a personal Google account',
+            'raw_org_storage_tb': int(storage_quota.get('limit', 0)) / (1024 ** 4),  # Show org storage in TB
+            'note': 'Storage shown is Drive usage only, not organization total'
+        }
+
+    def _handle_personal_account(self, account_id: str, storage_quota: dict) -> Dict[str, Any]:
+        """
+        Handle personal accounts - normal storage calculation
+        """
+        limit_bytes = storage_quota.get('limit')
+        usage_bytes = int(storage_quota.get('usage', 0))
+        
+        if limit_bytes is None:
+            # Unlimited storage (rare for personal accounts)
+            limit_gb = 15.0
+            available_gb = 15.0
+            is_unlimited = True
+        else:
+            limit_bytes = int(limit_bytes)
+            limit_gb = limit_bytes / (1024 ** 3)
+            available_gb = (limit_bytes - usage_bytes) / (1024 ** 3)
+            is_unlimited = False
+        
+        used_gb = usage_bytes / (1024 ** 3)
+        
+        print(f"📊 Personal account {account_id}:")
+        print(f"   Total: {limit_gb:.2f}GB")
+        print(f"   Used: {used_gb:.2f}GB")
+        print(f"   Available: {available_gb:.2f}GB")
+        
+        return {
+            'total_gb': limit_gb,
+            'used_gb': used_gb,
+            'available_gb': max(available_gb, 0),
+            'account_type': 'personal',
+            'is_unlimited': is_unlimited
+        }
+    
+    # NEW: FIXED storage info method
+    def get_storage_info(self, account_id: str) -> Dict[str, Any]:
+        """
+        SMART: Get storage information with workspace account detection
+        Handles personal vs workspace accounts differently
+        """
+        credentials = self.get_credentials(account_id)
+        if not credentials:
+            return {
+                'total_gb': 15.0,
+                'used_gb': 0.0,
+                'available_gb': 15.0,
+                'error': 'No credentials available'
+            }
+        
+        try:
+            # Build Drive service
+            drive_service = build('drive', 'v3', credentials=credentials)
+            
+            # Get storage quota AND user info
+            response = drive_service.about().get(fields='storageQuota,user').execute()
+            storage_quota = response.get('storageQuota', {})
+            user_info = response.get('user', {})
+            
+            print(f"🔍 Raw storage API response for {account_id}: {storage_quota}")
+            
+            # Extract values (ALL ARE IN BYTES!)
+            limit_bytes = storage_quota.get('limit')
+            usage_bytes = int(storage_quota.get('usage', 0))
+            usage_in_drive_bytes = int(storage_quota.get('usageInDrive', 0))
+            
+            # SMART: Detect workspace/school accounts
+            is_workspace = self._detect_workspace_account(limit_bytes, usage_bytes, user_info)
+            
+            if is_workspace:
+                print(f"🏢 Google Workspace account detected for {account_id}")
+                return self._handle_workspace_account(account_id, storage_quota, user_info)
+            else:
+                print(f"👤 Personal Google account detected for {account_id}")
+                return self._handle_personal_account(account_id, storage_quota)
+                
+        except Exception as e:
+            print(f"❌ Error getting storage info for {account_id}: {e}")
+            return {
+                'total_gb': 15.0,
+                'used_gb': 0.0,
+                'available_gb': 15.0,
+                'error': str(e),
+                'account_type': 'unknown'
+            }
+    
     def list_accounts(self) -> List[Dict[str, Any]]:
-        """List all stored accounts"""
+        """List all stored accounts with smart storage info"""
         accounts_info = []
         for account_id, account in self.accounts.items():
-            accounts_info.append({
+            # Get smart storage info
+            storage_info = self.get_storage_info(account_id)
+            
+            account_info = {
                 'account_id': account_id,
                 'email': account.email,
                 'created_at': account.created_at.isoformat(),
                 'last_used': account.last_used.isoformat(),
                 'is_active': account.is_active,
-                'is_current': account_id == self.active_account
-            })
+                'is_current': account_id == self.active_account,
+                'storage_info': storage_info
+            }
+            accounts_info.append(account_info)
+            
         return accounts_info
     
     def set_active_account(self, account_id: str) -> bool:
@@ -364,7 +507,7 @@ class GoogleAuthManager:
         return False
     
     def test_account_access(self, account_id: str) -> Dict[str, Any]:
-        """Test if an account's credentials are working"""
+        """Test if an account's credentials are working with FIXED storage info"""
         credentials = self.get_credentials(account_id)
         if not credentials:
             return {'success': False, 'error': 'No credentials found'}
@@ -374,16 +517,42 @@ class GoogleAuthManager:
             service = build('oauth2', 'v2', credentials=credentials)
             user_info = service.userinfo().get().execute()
             
-            # Test Drive access
+            # Test Drive access with CORRECT storage quota call
             drive_service = build('drive', 'v3', credentials=credentials)
+            
+            # FIXED: Use correct fields parameter for storage quota
             about = drive_service.about().get(fields='user,storageQuota').execute()
+            storage_quota = about.get('storageQuota', {})
+            
+            # Process storage quota correctly
+            limit_bytes = storage_quota.get('limit')
+            usage_bytes = int(storage_quota.get('usage', 0))
+            
+            if limit_bytes is None:
+                # Unlimited storage
+                storage_info = {
+                    'total_gb': 100.0,  # Display value for unlimited
+                    'used_gb': usage_bytes / (1024 ** 3),
+                    'available_gb': 100.0,
+                    'is_unlimited': True
+                }
+            else:
+                # Normal account
+                limit_bytes = int(limit_bytes)
+                storage_info = {
+                    'total_gb': limit_bytes / (1024 ** 3),
+                    'used_gb': usage_bytes / (1024 ** 3),
+                    'available_gb': (limit_bytes - usage_bytes) / (1024 ** 3),
+                    'is_unlimited': False
+                }
             
             return {
                 'success': True,
                 'user_email': user_info.get('email'),
                 'user_name': user_info.get('name'),
                 'drive_access': True,
-                'storage_quota': about.get('storageQuota', {}),
+                'storage_info': storage_info,
+                'raw_storage_quota': storage_quota,  # For debugging
                 'tested_at': datetime.now().isoformat()
             }
             
@@ -393,6 +562,43 @@ class GoogleAuthManager:
                 'error': str(e),
                 'tested_at': datetime.now().isoformat()
             }
+    
+    # NEW: Debug method for storage issues
+    def debug_storage_quota(self, account_id: str) -> Dict[str, Any]:
+        """
+        Debug method to inspect raw storage quota response
+        Use this to troubleshoot storage quota issues
+        """
+        credentials = self.get_credentials(account_id)
+        if not credentials:
+            return {'error': 'No credentials available'}
+        
+        try:
+            drive_service = build('drive', 'v3', credentials=credentials)
+            
+            # Get raw response with all available fields
+            response = drive_service.about().get(fields='*').execute()
+            
+            storage_quota = response.get('storageQuota', {})
+            user_info = response.get('user', {})
+            
+            return {
+                'account_id': account_id,
+                'user_email': user_info.get('emailAddress'),
+                'raw_storage_quota': storage_quota,
+                'all_fields': response,
+                'analysis': {
+                    'has_limit': 'limit' in storage_quota,
+                    'limit_value': storage_quota.get('limit'),
+                    'usage_value': storage_quota.get('usage'),
+                    'is_unlimited': storage_quota.get('limit') is None,
+                    'limit_gb': int(storage_quota.get('limit', 0)) / (1024**3) if storage_quota.get('limit') else None,
+                    'usage_gb': int(storage_quota.get('usage', 0)) / (1024**3)
+                }
+            }
+            
+        except Exception as e:
+            return {'error': str(e), 'account_id': account_id}
     
     def save_accounts_to_vault(self) -> Dict[str, Any]:
         """

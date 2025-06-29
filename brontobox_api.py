@@ -11,11 +11,24 @@ import asyncio
 import hashlib
 import base64
 import time
+import sys
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
 import tempfile
 import shutil
+
+
+# PRODUCTION FIX: Set UTF-8 encoding for console output
+if sys.platform == "win32":
+    try:
+        # Try to set UTF-8 encoding
+        os.environ["PYTHONIOENCODING"] = "utf-8"
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except:
+        # Fallback: disable emoji/unicode characters
+        pass
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -61,6 +74,7 @@ class StorageInfo(BaseModel):
     total_available_gb: float
     usage_percentage: float
     accounts: List[Dict[str, Any]]
+    workspace_summary: Optional[Dict[str, Any]] = None  # New field
 
 class FileInfo(BaseModel):
     file_id: str
@@ -155,11 +169,11 @@ def save_vault_to_registry(vault_id: str, vault_data: Dict[str, Any]) -> bool:
         with open(registry_path, 'w') as f:
             json.dump(registry, f, indent=2)
             
-        print(f"✅ Vault {vault_id} saved to registry")
+        print(f"Vault {vault_id} saved to registry")
         return True
         
     except Exception as e:
-        print(f"❌ Failed to save vault to registry: {e}")
+        print(f"Failed to save vault to registry: {e}")
         return False
 
 def load_vault_from_registry(vault_id: str = None) -> Optional[Dict[str, Any]]:
@@ -187,7 +201,7 @@ def load_vault_from_registry(vault_id: str = None) -> Optional[Dict[str, Any]]:
             return latest_vault
             
     except Exception as e:
-        print(f"❌ Failed to load vault from registry: {e}")
+        print(f"Failed to load vault from registry: {e}")
         return None
 
 def list_vaults_from_registry() -> List[Dict[str, Any]]:
@@ -204,7 +218,7 @@ def list_vaults_from_registry() -> List[Dict[str, Any]]:
         return list(registry.get("vaults", {}).values())
         
     except Exception as e:
-        print(f"❌ Failed to list vaults: {e}")
+        print(f"Failed to list vaults: {e}")
         return []
 
 def get_accounts_file_path(vault_id: str) -> str:
@@ -227,10 +241,10 @@ def save_file_registry_to_disk():
             registry_file = get_registry_file_path(vault.vault_id)
             with open(registry_file, 'w') as f:
                 json.dump(encrypted_registry, f)
-            print(f"💾 File registry auto-saved for vault {vault.vault_id} ({len(storage_manager.stored_files)} files)")
+            print(f"File registry auto-saved for vault {vault.vault_id} ({len(storage_manager.stored_files)} files)")
             return True
     except Exception as e:
-        print(f"⚠️ Could not auto-save registry: {e}")
+        print(f"Could not auto-save registry: {e}")
     return False
 
 def load_file_registry_from_disk():
@@ -250,10 +264,10 @@ def load_file_registry_from_disk():
             success = storage_manager.load_file_registry(encrypted_registry)
             if success:
                 files_loaded = len(storage_manager.stored_files)
-                print(f"📂 Auto-loaded {files_loaded} files from registry for vault {vault.vault_id}")
+                print(f"Auto-loaded {files_loaded} files from registry for vault {vault.vault_id}")
                 return True
     except Exception as e:
-        print(f"⚠️ Could not auto-load registry: {e}")
+        print(f"Could not auto-load registry: {e}")
     return False
 
 # API Endpoints
@@ -406,16 +420,16 @@ async def unlock_vault(request: VaultUnlockRequest):
             except Exception as e:
                 print(f"Warning: Could not load file registry: {e}")
         
-        # 🔍 TRIGGER AUTO-DISCOVERY after vault unlock
+        # TRIGGER AUTO-DISCOVERY after vault unlock
         if len(auth_manager.accounts) > 0:
-            print(f"🔍 Triggering file discovery for {len(auth_manager.accounts)} accounts...")
+            print(f"Triggering file discovery for {len(auth_manager.accounts)} accounts...")
             old_count = len(storage_manager.stored_files)
             storage_manager.refresh_file_discovery()
             new_count = len(storage_manager.stored_files)
             discovered = new_count - old_count
             
             if discovered > 0:
-                print(f"🎉 Discovered {discovered} existing files across accounts!")
+                print(f"Discovered {discovered} existing files across accounts!")
         
         # Update last accessed time
         matching_vault["last_accessed"] = datetime.now().isoformat()
@@ -460,9 +474,9 @@ async def lock_vault():
                     accounts_file = get_accounts_file_path(vault_id)
                     with open(accounts_file, 'w') as f:
                         json.dump(encrypted_accounts, f)
-                    print(f"💾 Accounts saved for vault {vault_id}")
+                    print(f"Accounts saved for vault {vault_id}")
                 except Exception as e:
-                    print(f"⚠️ Could not save accounts: {e}")
+                    print(f"Could not save accounts: {e}")
             
             # Save file registry for this vault
             storage_manager = app_state.get("storage_manager")
@@ -472,9 +486,9 @@ async def lock_vault():
                     registry_file = get_registry_file_path(vault_id)
                     with open(registry_file, 'w') as f:
                         json.dump(encrypted_registry, f)
-                    print(f"💾 File registry saved for vault {vault_id}")
+                    print(f"File registry saved for vault {vault_id}")
                 except Exception as e:
-                    print(f"⚠️ Could not save file registry: {e}")
+                    print(f"Could not save file registry: {e}")
         
         # Lock vault
         vault.lock_vault()
@@ -596,17 +610,17 @@ async def authenticate_account(request: AccountAuthRequest):
             with open(accounts_file, 'w') as f:
                 json.dump(encrypted_accounts, f)
         
-        # 🔍 TRIGGER AUTO-DISCOVERY for new account
+        # TRIGGER AUTO-DISCOVERY for new account
         discovered = 0
         if storage_manager:
-            print(f"🔍 Triggering file discovery for new account: {account_id}")
+            print(f"Triggering file discovery for new account: {account_id}")
             old_count = len(storage_manager.stored_files)
             storage_manager.refresh_file_discovery()
             new_count = len(storage_manager.stored_files)
             discovered = new_count - old_count
             
             if discovered > 0:
-                print(f"🎉 Discovered {discovered} existing files in new account!")
+                print(f"Discovered {discovered} existing files in new account!")
         
         # Get account info
         accounts = auth_manager.list_accounts()
@@ -685,7 +699,7 @@ async def test_account(account_id: str):
 
 @app.get("/storage/info", response_model=StorageInfo)
 async def get_storage_info():
-    """Get comprehensive storage information"""
+    """Get comprehensive storage information with workspace account handling"""
     if not app_state["vault_unlocked"]:
         raise HTTPException(status_code=401, detail="Vault must be unlocked first")
     
@@ -694,26 +708,60 @@ async def get_storage_info():
         if not storage_manager:
             raise HTTPException(status_code=500, detail="Storage manager not initialized")
         
-        summary = storage_manager.get_storage_summary()
+        # Get account information with smart workspace detection
+        auth_manager = app_state["auth_manager"]
+        accounts = auth_manager.list_accounts()
+        
+        # Separate personal and workspace accounts
+        personal_accounts = []
+        workspace_accounts = []
+        
+        total_personal_capacity = 0
+        total_personal_used = 0
+        total_workspace_drive_usage = 0
+        
+        for account in accounts:
+            storage_info = account.get('storage_info', {})
+            account_type = storage_info.get('account_type', 'personal')
+            
+            if account_type == 'workspace':
+                workspace_accounts.append(account)
+                total_workspace_drive_usage += storage_info.get('used_gb', 0)
+            else:
+                personal_accounts.append(account)
+                total_personal_capacity += storage_info.get('total_gb', 0)
+                total_personal_used += storage_info.get('used_gb', 0)
+        
+        total_personal_available = total_personal_capacity - total_personal_used
+        
+        # Calculate usage percentage for personal accounts only
+        personal_usage_percentage = (total_personal_used / total_personal_capacity * 100) if total_personal_capacity > 0 else 0
         
         return StorageInfo(
-            total_accounts=summary["google_accounts"]["count"],
-            total_capacity_gb=summary["google_accounts"]["total_capacity_gb"],
-            total_used_gb=summary["google_accounts"]["total_used_gb"],
-            total_available_gb=summary["google_accounts"]["total_available_gb"],
-            usage_percentage=summary["google_accounts"]["usage_percentage"],
-            accounts=summary["accounts"]
+            total_accounts=len(personal_accounts),  # Only count personal accounts
+            total_capacity_gb=total_personal_capacity,
+            total_used_gb=total_personal_used,
+            total_available_gb=total_personal_available,
+            usage_percentage=personal_usage_percentage,
+            accounts=accounts,  # Include all accounts but with type distinction
+            workspace_summary={
+                'count': len(workspace_accounts),
+                'drive_usage_gb': total_workspace_drive_usage,
+                'accounts': workspace_accounts
+            } if workspace_accounts else None
         )
         
     except Exception as e:
-        # Return empty storage info if no accounts configured
+        print(f"Storage info error: {e}")
+        # Return empty storage info for workspace-only setups
         return StorageInfo(
             total_accounts=0,
             total_capacity_gb=0.0,
             total_used_gb=0.0,
             total_available_gb=0.0,
             usage_percentage=0.0,
-            accounts=[]
+            accounts=[],
+            workspace_summary=None
         )
 
 # File Management Endpoints - UPDATED FOR UNIFIED EXPERIENCE
@@ -780,7 +828,7 @@ async def upload_file(file: UploadFile = File(...), metadata: str = "{}"):
 @app.get("/files/list")
 async def list_files():
     """
-    📋 ENHANCED: List all BrontoBox files (auto-discovered + uploaded)
+    ENHANCED: List all BrontoBox files (auto-discovered + uploaded)
     Now shows unified view across all accounts with original filenames
     """
     if not app_state["vault_unlocked"]:
@@ -820,7 +868,7 @@ async def list_files():
 @app.post("/files/refresh-discovery")
 async def refresh_file_discovery():
     """
-    🔄 NEW ENDPOINT: Manually refresh file discovery across all accounts
+    NEW ENDPOINT: Manually refresh file discovery across all accounts
     Useful when user wants to refresh the file list
     """
     if not app_state["vault_unlocked"]:
@@ -859,7 +907,7 @@ async def refresh_file_discovery():
 @app.get("/files/statistics")
 async def get_file_statistics():
     """
-    📊 NEW ENDPOINT: Get detailed file statistics
+    NEW ENDPOINT: Get detailed file statistics
     Shows breakdown of discovered vs uploaded files
     """
     if not app_state["vault_unlocked"]:
@@ -912,7 +960,7 @@ async def get_file_statistics():
 @app.get("/files/{file_id}/download")
 async def download_file(file_id: str):
     """
-    ⬇️ ENHANCED: Download original decrypted file
+    ENHANCED: Download original decrypted file
     Now works for both uploaded and auto-discovered files
     """
     if not app_state["vault_unlocked"]:
@@ -943,7 +991,7 @@ async def download_file(file_id: str):
         
         # Special handling for discovered files
         if file_info.get('is_discovered'):
-            print(f"⚠️ Downloaded discovered file - may need manual verification")
+            print(f"Downloaded discovered file - may need manual verification")
         
         await manager.broadcast({
             "type": "file_downloaded",
@@ -1015,7 +1063,7 @@ async def delete_file(file_id: str):
 @app.get("/drive/brontobox-files/{account_id}")
 async def list_brontobox_files_for_account(account_id: str):
     """
-    📁 ENHANCED: List BrontoBox files for specific account
+    ENHANCED: List BrontoBox files for specific account
     Shows original filenames, not encrypted chunk names
     """
     if not app_state["vault_unlocked"]:
@@ -1057,7 +1105,7 @@ async def list_brontobox_files_for_account(account_id: str):
 @app.get("/drive/raw-chunks/{account_id}")
 async def list_raw_chunks(account_id: str):
     """
-    🔧 TECHNICAL VIEW: List raw encrypted chunks (for advanced users)
+    TECHNICAL VIEW: List raw encrypted chunks (for advanced users)
     This shows the actual encrypted files stored in Google Drive
     """
     if not app_state["vault_unlocked"]:
@@ -1461,7 +1509,7 @@ async def load_file_registry():
 @app.get("/data/export-registry")
 async def export_file_registry():
     """
-    📤 Export encrypted file registry for backup
+    Export encrypted file registry for backup
     Returns downloadable file with all file metadata
     """
     if not app_state["vault_unlocked"]:
@@ -1507,7 +1555,7 @@ async def export_file_registry():
 @app.get("/data/backup-vault-info")
 async def backup_vault_info():
     """
-    🔑 Export vault information for backup (NO PRIVATE KEYS)
+    Export vault information for backup (NO PRIVATE KEYS)
     Returns vault metadata and salt for vault recovery
     """
     if not app_state["vault_unlocked"]:
@@ -1558,7 +1606,7 @@ async def backup_vault_info():
 @app.post("/data/clear-all")
 async def clear_all_data():
     """
-    🗑️ DANGER: Clear all BrontoBox data
+    DANGER: Clear all BrontoBox data
     Removes all files from Google Drive, deletes accounts, and clears vault
     """
     if not app_state["vault_unlocked"]:
@@ -1581,11 +1629,11 @@ async def clear_all_data():
         }
         
         # Step 1: Delete all files from Google Drive
-        print(f"🗑️ Starting complete data deletion for vault {vault_id}")
+        print(f"Starting complete data deletion for vault {vault_id}")
         
         for file_id, stored_file in storage_manager.stored_files.items():
             try:
-                print(f"🗑️ Deleting file: {stored_file.original_name}")
+                print(f"Deleting file: {stored_file.original_name}")
                 success = storage_manager.delete_file(file_id)
                 if success:
                     deletion_results["files_deleted"] += 1
@@ -1609,11 +1657,11 @@ async def clear_all_data():
             
             if os.path.exists(accounts_file):
                 os.remove(accounts_file)
-                print(f"🗑️ Removed accounts file: {accounts_file}")
+                print(f"Removed accounts file: {accounts_file}")
             
             if os.path.exists(registry_file):
                 os.remove(registry_file)
-                print(f"🗑️ Removed registry file: {registry_file}")
+                print(f"Removed registry file: {registry_file}")
                 
         except Exception as e:
             deletion_results["errors"].append(f"Error removing vault files: {str(e)}")
@@ -1631,7 +1679,7 @@ async def clear_all_data():
                     with open(registry_path, 'w') as f:
                         json.dump(registry, f, indent=2)
                     
-                    print(f"🗑️ Removed vault {vault_id} from registry")
+                    print(f"Removed vault {vault_id} from registry")
                     
         except Exception as e:
             deletion_results["errors"].append(f"Error updating vault registry: {str(e)}")
@@ -1643,7 +1691,7 @@ async def clear_all_data():
         app_state["storage_manager"] = None
         app_state["vault_unlocked"] = False
         
-        print(f"✅ Data deletion complete: {deletion_results['files_deleted']} files deleted, {deletion_results['accounts_cleared']} accounts cleared")
+        print(f"Data deletion complete: {deletion_results['files_deleted']} files deleted, {deletion_results['accounts_cleared']} accounts cleared")
         
         await manager.broadcast({
             "type": "data_cleared",
@@ -1663,7 +1711,7 @@ async def clear_all_data():
 @app.post("/data/import-registry")
 async def import_file_registry(file: UploadFile = File(...)):
     """
-    📥 Import file registry from backup
+    Import file registry from backup
     Restores file metadata from exported registry file
     """
     if not app_state["vault_unlocked"]:
@@ -1689,7 +1737,7 @@ async def import_file_registry(file: UploadFile = File(...)):
         current_vault_id = vault.vault_id
         
         if imported_vault_id != current_vault_id:
-            print(f"⚠️ Warning: Importing registry from different vault ({imported_vault_id} → {current_vault_id})")
+            print(f"Warning: Importing registry from different vault ({imported_vault_id} → {current_vault_id})")
         
         # Load the encrypted registry
         encrypted_registry = import_data["encrypted_registry"]
@@ -1719,7 +1767,7 @@ async def import_file_registry(file: UploadFile = File(...)):
 @app.get("/data/system-info")
 async def get_system_info():
     """
-    📋 Get comprehensive system information for troubleshooting
+    Get comprehensive system information for troubleshooting
     """
     try:
         vault = app_state.get("vault")
@@ -1781,7 +1829,7 @@ async def get_system_info():
 @app.get("/backup/detect")
 async def detect_backup_files():
     """
-    🔍 Auto-detect backup files in the current directory
+    Auto-detect backup files in the current directory
     """
     try:
         current_dir = os.getcwd()
@@ -1791,11 +1839,11 @@ async def detect_backup_files():
             "directory": current_dir
         }
         
-        print(f"🔍 Scanning directory: {current_dir}")
+        print(f"Scanning directory: {current_dir}")
         
         # Scan for backup files with flexible pattern matching
         for filename in os.listdir(current_dir):
-            print(f"📄 Checking file: {filename}")
+            print(f"Checking file: {filename}")
             
             # Check for vault backup files (both patterns)
             is_vault_backup = (
@@ -1820,11 +1868,11 @@ async def detect_backup_files():
                             "exported_at": backup_data.get("exported_at"),
                             "file_path": os.path.join(current_dir, filename)
                         })
-                        print(f"✅ Detected vault backup: {filename}")
+                        print(f"Detected vault backup: {filename}")
                     else:
-                        print(f"⚠️ File {filename} is not a valid vault backup")
+                        print(f"File {filename} is not a valid vault backup")
                 except Exception as e:
-                    print(f"⚠️ Could not read vault backup file {filename}: {e}")
+                    print(f"Could not read vault backup file {filename}: {e}")
             
             elif is_registry_backup:
                 try:
@@ -1839,13 +1887,13 @@ async def detect_backup_files():
                             "exported_at": registry_data.get("exported_at"),
                             "file_path": os.path.join(current_dir, filename)
                         })
-                        print(f"✅ Detected registry backup: {filename}")
+                        print(f"Detected registry backup: {filename}")
                     else:
-                        print(f"⚠️ File {filename} is not a valid registry backup")
+                        print(f"File {filename} is not a valid registry backup")
                 except Exception as e:
-                    print(f"⚠️ Could not read registry backup file {filename}: {e}")
+                    print(f"Could not read registry backup file {filename}: {e}")
         
-        print(f"🔍 Detection complete: {len(detected_backups['vault_backups'])} vault, {len(detected_backups['registry_backups'])} registry")
+        print(f"Detection complete: {len(detected_backups['vault_backups'])} vault, {len(detected_backups['registry_backups'])} registry")
         
         return {
             "success": True,
@@ -1855,7 +1903,7 @@ async def detect_backup_files():
         }
         
     except Exception as e:
-        print(f"❌ Backup detection failed: {e}")
+        print(f"Backup detection failed: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -1865,7 +1913,7 @@ async def detect_backup_files():
 @app.post("/vault/restore-from-backup")
 async def restore_vault_from_backup(backup_file: str, master_password: str):
     """
-    🔧 Restore vault from backup file
+    Restore vault from backup file
     Uses backup file + master password to recreate vault access
     """
     try:
@@ -1884,7 +1932,7 @@ async def restore_vault_from_backup(backup_file: str, master_password: str):
         salt = backup_data["salt"]
         verification_data = backup_data["verification_data"]
         
-        print(f"🔧 Restoring vault from backup: {vault_id}")
+        print(f"Restoring vault from backup: {vault_id}")
         
         # Initialize vault with backup data
         vault = VaultCore()
@@ -1916,7 +1964,7 @@ async def restore_vault_from_backup(backup_file: str, master_password: str):
         
         save_vault_to_registry(vault_id, vault_data)
         
-        print(f"✅ Vault restored successfully: {vault_id}")
+        print(f"Vault restored successfully: {vault_id}")
         
         await manager.broadcast({
             "type": "vault_restored",
@@ -1939,7 +1987,7 @@ async def restore_vault_from_backup(backup_file: str, master_password: str):
 @app.post("/data/import-registry-from-file")
 async def import_registry_from_file(registry_file: str):
     """
-    📥 Import file registry from local backup file
+    Import file registry from local backup file
     Automatically loads registry from detected backup file
     """
     if not app_state["vault_unlocked"]:
@@ -1968,7 +2016,7 @@ async def import_registry_from_file(registry_file: str):
         current_vault_id = vault.vault_id
         
         if imported_vault_id != current_vault_id:
-            print(f"⚠️ Warning: Importing registry from different vault ({imported_vault_id} → {current_vault_id})")
+            print(f"Warning: Importing registry from different vault ({imported_vault_id} → {current_vault_id})")
         
         # Load the encrypted registry
         encrypted_registry = import_data["encrypted_registry"]
@@ -1980,7 +2028,7 @@ async def import_registry_from_file(registry_file: str):
             # Auto-save the imported registry to vault-specific file
             save_file_registry_to_disk()
             
-            print(f"✅ Registry imported: {files_imported} files loaded")
+            print(f"Registry imported: {files_imported} files loaded")
             
             await manager.broadcast({
                 "type": "registry_imported",
@@ -2005,7 +2053,7 @@ async def import_registry_from_file(registry_file: str):
 @app.get("/restore/analyze-missing-accounts")
 async def analyze_missing_accounts():
     """
-    🔍 Analyze which accounts are needed for file access after restore
+    Analyze which accounts are needed for file access after restore
     """
     if not app_state["vault_unlocked"]:
         raise HTTPException(status_code=401, detail="Vault must be unlocked first")
@@ -2083,15 +2131,15 @@ async def analyze_missing_accounts():
 @app.post("/restore/complete-restoration")
 async def complete_restoration(request: RestoreRequest):
     """
-    🎯 COMPLETE RESTORATION: Restore vault + import registry in one operation
+    COMPLETE RESTORATION: Restore vault + import registry in one operation
     """
     try:
-        print(f"🚀 Starting complete restoration...")
-        print(f"📁 Vault backup: {request.vault_backup_file}")
-        print(f"📁 Registry backup: {request.registry_backup_file}")
+        print(f"Starting complete restoration...")
+        print(f"Vault backup: {request.vault_backup_file}")
+        print(f"Registry backup: {request.registry_backup_file}")
         
         # Step 1: Restore vault from backup
-        print(f"🔧 Step 1: Restoring vault from {request.vault_backup_file}")
+        print(f"Step 1: Restoring vault from {request.vault_backup_file}")
         
         # Read and validate vault backup
         if not os.path.exists(request.vault_backup_file):
@@ -2134,12 +2182,12 @@ async def complete_restoration(request: RestoreRequest):
         }
         save_vault_to_registry(vault_id, vault_data)
         
-        print(f"✅ Step 1 complete: Vault {vault_id} restored")
+        print(f"Step 1 complete: Vault {vault_id} restored")
         
         # Step 2: Import file registry (if provided)
         files_imported = 0
         if request.registry_backup_file and os.path.exists(request.registry_backup_file):
-            print(f"📥 Step 2: Importing registry from {request.registry_backup_file}")
+            print(f"Step 2: Importing registry from {request.registry_backup_file}")
             
             with open(request.registry_backup_file, 'r') as f:
                 registry_data = json.load(f)
@@ -2151,9 +2199,9 @@ async def complete_restoration(request: RestoreRequest):
                 if registry_success:
                     files_imported = len(storage_manager.stored_files)
                     save_file_registry_to_disk()
-                    print(f"✅ Step 2 complete: {files_imported} files imported")
+                    print(f"Step 2 complete: {files_imported} files imported")
                 else:
-                    print(f"⚠️ Step 2 warning: Could not decrypt registry (vault mismatch?)")
+                    print(f"Step 2 warning: Could not decrypt registry (vault mismatch?)")
         
         await manager.broadcast({
             "type": "complete_restoration",
@@ -2184,13 +2232,13 @@ async def complete_restoration(request: RestoreRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Complete restoration failed: {e}")
+        print(f"Complete restoration failed: {e}")
         raise HTTPException(status_code=500, detail=f"Complete restoration failed: {str(e)}")
 
 @app.get("/restore/check-compatibility") 
 async def check_backup_compatibility(vault_backup: str, registry_backup: str = None):
     """
-    🔍 Check if backup files are compatible with each other
+    Check if backup files are compatible with each other
     Validates backup files before attempting restoration
     """
     try:
@@ -2267,7 +2315,7 @@ async def check_backup_compatibility(vault_backup: str, registry_backup: str = N
 @app.post("/restore/fix-account-mapping")
 async def fix_account_mapping():
     """
-    🔧 Fix account ID mismatches after restore
+    Fix account ID mismatches after restore
     Maps old account IDs in file metadata to current account IDs
     """
     if not app_state["vault_unlocked"]:
@@ -2284,7 +2332,7 @@ async def fix_account_mapping():
         current_accounts = auth_manager.list_accounts()
         current_emails = {acc['email']: acc['account_id'] for acc in current_accounts if acc['is_active']}
         
-        print(f"🔧 Current accounts: {list(current_emails.keys())}")
+        print(f"Current accounts: {list(current_emails.keys())}")
         
         # Get all old account IDs from file metadata
         old_account_ids = set()
@@ -2292,7 +2340,7 @@ async def fix_account_mapping():
             for chunk in stored_file.chunks:
                 old_account_ids.add(chunk['drive_account'])
         
-        print(f"📋 Old account IDs in files: {list(old_account_ids)}")
+        print(f"Old account IDs in files: {list(old_account_ids)}")
         
         # Try to map old account IDs to current ones
         # Strategy: Check if chunks actually exist in current accounts
@@ -2324,21 +2372,21 @@ async def fix_account_mapping():
                     
                     if has_matching_chunks:
                         best_match = current_account_id
-                        print(f"✅ Mapped {old_account_id} → {current_account_id} ({email})")
+                        print(f"Mapped {old_account_id} → {current_account_id} ({email})")
                         break
                         
                 except Exception as e:
-                    print(f"⚠️ Could not check account {current_account_id}: {e}")
+                    print(f"Could not check account {current_account_id}: {e}")
                     continue
             
             if best_match:
                 account_mapping[old_account_id] = best_match
             else:
-                print(f"❌ No match found for old account {old_account_id}")
+                print(f"No match found for old account {old_account_id}")
         
         # Apply the mapping to all files
         if account_mapping:
-            print(f"🔄 Applying account mapping: {account_mapping}")
+            print(f"Applying account mapping: {account_mapping}")
             
             for stored_file in storage_manager.stored_files.values():
                 for chunk in stored_file.chunks:
@@ -2357,7 +2405,7 @@ async def fix_account_mapping():
             # Save the updated file registry
             save_file_registry_to_disk()
             
-            print(f"✅ Account mapping complete: {chunks_remapped} chunks remapped")
+            print(f"Account mapping complete: {chunks_remapped} chunks remapped")
             
             await manager.broadcast({
                 "type": "account_mapping_fixed",
@@ -2387,7 +2435,7 @@ async def fix_account_mapping():
 @app.post("/restore/guide-account-recovery")
 async def guide_account_recovery():
     """
-    🧭 Provide step-by-step guidance for account recovery after restore
+    Provide step-by-step guidance for account recovery after restore
     """
     try:
         # Get missing account analysis
@@ -2461,7 +2509,7 @@ async def guide_account_recovery():
 @app.get("/restore/status")
 async def get_restore_status():
     """
-    📊 Get current restoration status including account connectivity
+    Get current restoration status including account connectivity
     """
     if not app_state["vault_unlocked"]:
         return {"unlocked": False, "restoration_complete": False}
@@ -2512,11 +2560,11 @@ async def get_restore_status():
 @app.post("/restore/validate-password")
 async def validate_restore_password(request: RestoreRequest):
     """
-    🔐 Validate master password for vault backup WITHOUT doing full restoration
+    Validate master password for vault backup WITHOUT doing full restoration
     This prevents misleading users with wrong passwords
     """
     try:
-        print(f"🔐 Validating password for vault backup: {request.vault_backup_file}")
+        print(f"Validating password for vault backup: {request.vault_backup_file}")
         
         # Read and validate vault backup
         if not os.path.exists(request.vault_backup_file):
@@ -2539,10 +2587,10 @@ async def validate_restore_password(request: RestoreRequest):
         success = temp_vault.unlock_vault(request.master_password, salt, verification_data)
         
         if not success:
-            print(f"❌ Password validation failed for vault {vault_id}")
+            print(f"Password validation failed for vault {vault_id}")
             raise HTTPException(status_code=401, detail="Invalid master password for this vault backup")
         
-        print(f"✅ Password validation successful for vault {vault_id}")
+        print(f"Password validation successful for vault {vault_id}")
         
         # Immediately lock the temp vault (we don't want to keep it unlocked)
         temp_vault.lock_vault()
@@ -2557,7 +2605,7 @@ async def validate_restore_password(request: RestoreRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Password validation error: {e}")
+        print(f"Password validation error: {e}")
         raise HTTPException(status_code=500, detail=f"Password validation failed: {str(e)}")
 
 @app.get("/debug/file/{file_id}")
@@ -2648,7 +2696,7 @@ async def debug_files():
 @app.get("/debug/account-comparison")
 async def debug_account_comparison():
     """
-    🔍 Compare old account IDs vs current account IDs for debugging
+    Compare old account IDs vs current account IDs for debugging
     """
     if not app_state["vault_unlocked"]:
         return {"error": "Vault not unlocked"}
@@ -2700,6 +2748,45 @@ async def debug_account_comparison():
         
     except Exception as e:
         return {"error": str(e)}
+    
+@app.get("/accounts/{account_id}/storage-debug")
+async def debug_account_storage(account_id: str):
+    """
+    Debug endpoint to analyze storage quota for any account type
+    """
+    if not app_state["vault_unlocked"]:
+        raise HTTPException(status_code=401, detail="Vault must be unlocked first")
+    
+    try:
+        auth_manager = app_state["auth_manager"]
+        
+        # Get debug storage info
+        debug_info = auth_manager.debug_storage_quota(account_id)
+        
+        return {
+            "success": True,
+            "debug_info": debug_info,
+            "recommendations": {
+                "workspace_account": [
+                    "Google Workspace accounts show organization storage, not individual quotas",
+                    "BrontoBox will use Drive usage only for workspace accounts",
+                    "Consider adding personal Google accounts for predictable 15GB quotas",
+                    "Workspace accounts are still useful for BrontoBox storage"
+                ],
+                "personal_account": [
+                    "Personal accounts provide reliable 15GB storage quotas", 
+                    "Perfect for BrontoBox distributed storage strategy",
+                    "Add up to 4 personal accounts for 60GB total capacity"
+                ]
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "account_id": account_id
+        }
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws")
@@ -2743,18 +2830,18 @@ async def general_exception_handler(request, exc):
     )
 
 if __name__ == "__main__":
-    print("🦕 Starting BrontoBox API Server with Enhanced Security & Unified File Experience...")
-    print("🔐 Vault authentication: SECURE")
-    print("🔍 File discovery: AUTO-ENABLED")
-    print("📁 Unified file view: ACTIVE")
-    print("🔌 WebSocket: ws://localhost:8000/ws")
-    print("📚 API Docs: http://localhost:8000/docs")
-    print("🔧 Health Check: http://localhost:8000/health")
+    print("Starting BrontoBox API Server with Enhanced Security & Unified File Experience...")
+    print("Vault authentication: SECURE")
+    print("File discovery: AUTO-ENABLED")
+    print("Unified file view: ACTIVE")
+    print("WebSocket: ws://localhost:8000/ws")
+    print("API Docs: http://localhost:8000/docs")
+    print("Health Check: http://localhost:8000/health")
     
     uvicorn.run(
-        "brontobox_api:app",
+        app,
         host="127.0.0.1",
         port=8000,
-        reload=True,
+        reload=False,
         log_level="info"
     )

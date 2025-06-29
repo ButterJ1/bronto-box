@@ -200,7 +200,7 @@ const AccountRecoveryBanner = ({ onAddAccount, onDismiss }) => {
         {/* Helpful Tips - UPDATED */}
         <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded">
           <p className="text-xs text-blue-700">
-            💡 <strong>Try "Fix Account Mapping" first</strong> - it automatically maps your current accounts to your files. 
+            💡 <strong>Try "Refresh Status" first</strong> - it automatically maps your current accounts to your files. 
             If that doesn't work, you might need to add more Google accounts.
           </p>
         </div>

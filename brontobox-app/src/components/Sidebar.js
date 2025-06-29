@@ -6,10 +6,13 @@ import { Plus, Settings, Folder, Search, HardDrive, Eye, Clock, Upload, RefreshC
 import FileManager from './FileManager';
 
 const AccountCard = ({ account, isSelected, onSelect, onViewFiles }) => {
-  const storageUsed = account.storage_info?.used_gb || 0;
-  const storageTotal = account.storage_info?.total_gb || 15;
+  const storage_info = account.storage_info || {};
+  const isWorkspace = storage_info.account_type === 'workspace';
+  
+  const storageUsed = storage_info.used_gb || 0;
+  const storageTotal = storage_info.total_gb || 15;
   const storageAvailable = storageTotal - storageUsed;
-  const usagePercentage = (storageUsed / storageTotal) * 100;
+  const usagePercentage = Math.min((storageUsed / storageTotal) * 100, 100);
 
   return (
     <motion.div
@@ -19,14 +22,18 @@ const AccountCard = ({ account, isSelected, onSelect, onViewFiles }) => {
       className={`
         bg-white rounded-lg p-4 mb-3 shadow-md cursor-pointer transition-all
         ${isSelected
-          ? 'ring-2 ring-green-500 bg-gradient-to-br from-green-50 to-green-100'
+          ? isWorkspace ? 'ring-2 ring-orange-500 bg-gradient-to-br from-orange-50 to-orange-100' : 'ring-2 ring-green-500 bg-gradient-to-br from-green-50 to-green-100'
           : 'hover:shadow-lg'
         }
+        ${isWorkspace ? 'border-l-4 border-orange-400' : 'border-l-4 border-green-400'}
       `}
     >
       <div className="flex items-center justify-between mb-2">
         <div className="text-xs text-gray-600 truncate flex-1" title={account.email}>
           {account.email}
+          {isWorkspace && (
+            <span className="ml-1 text-orange-600" title="Google Workspace Account">🏢</span>
+          )}
         </div>
         <button
           onClick={(e) => {
@@ -40,34 +47,128 @@ const AccountCard = ({ account, isSelected, onSelect, onViewFiles }) => {
         </button>
       </div>
 
+      {/* Workspace Warning */}
+      {isWorkspace && (
+        <div className="mb-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs">
+          <div className="flex items-center text-orange-700">
+            <span className="mr-1">🏢</span>
+            <span className="font-medium">Workspace Account</span>
+          </div>
+          <div className="text-orange-600 mt-1">
+            {storage_info.note || 'Drive usage only'}
+          </div>
+        </div>
+      )}
+
       {/* Storage Bar */}
       <div className="bg-gray-200 h-2 rounded-full overflow-hidden mb-2">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${usagePercentage}%` }}
           transition={{ duration: 1 }}
-          className="h-full bg-gradient-to-r from-green-400 to-green-600"
+          className={`h-full ${isWorkspace 
+            ? 'bg-gradient-to-r from-orange-400 to-orange-600' 
+            : 'bg-gradient-to-r from-green-400 to-green-600'
+          }`}
         />
       </div>
 
       {/* Storage Info */}
       <div className="flex justify-between text-xs text-gray-600">
-        <span>{storageAvailable.toFixed(1)}GB free</span>
-        <span>{storageTotal.toFixed(1)}GB</span>
+        <span>
+          {storageAvailable.toFixed(1)}GB {isWorkspace ? 'est.' : 'free'}
+        </span>
+        <span>
+          {storageTotal.toFixed(1)}GB {isWorkspace ? 'est.' : ''}
+        </span>
       </div>
 
       {/* Enhanced Info */}
       <div className="mt-2 flex items-center justify-between text-xs">
-        <span className="text-green-600">
-          📦 BrontoBox Ready
+        <span className={isWorkspace ? "text-orange-600" : "text-green-600"}>
+          {isWorkspace ? '🏢 Workspace Ready' : '📦 BrontoBox Ready'}
         </span>
         <span className="text-gray-500">
           💾 {usagePercentage.toFixed(1)}% used
+          {isWorkspace && (
+            <span className="ml-1 text-orange-600" title="Drive usage only">📁</span>
+          )}
         </span>
       </div>
+
+      {/* Organization Info for Workspace */}
+      {isWorkspace && storage_info.organization_domain && (
+        <div className="mt-1 text-xs text-gray-500">
+          📍 {storage_info.organization_domain}
+        </div>
+      )}
     </motion.div>
   );
 };
+
+// const AccountCard = ({ account, isSelected, onSelect, onViewFiles }) => {
+//   const storageUsed = account.storage_info?.used_gb || 0;
+//   const storageTotal = account.storage_info?.total_gb || 15;
+//   const storageAvailable = storageTotal - storageUsed;
+//   const usagePercentage = (storageUsed / storageTotal) * 100;
+
+//   return (
+//     <motion.div
+//       whileHover={{ scale: 1.02 }}
+//       whileTap={{ scale: 0.98 }}
+//       onClick={() => onSelect(account.account_id)}
+//       className={`
+//         bg-white rounded-lg p-4 mb-3 shadow-md cursor-pointer transition-all
+//         ${isSelected
+//           ? 'ring-2 ring-green-500 bg-gradient-to-br from-green-50 to-green-100'
+//           : 'hover:shadow-lg'
+//         }
+//       `}
+//     >
+//       <div className="flex items-center justify-between mb-2">
+//         <div className="text-xs text-gray-600 truncate flex-1" title={account.email}>
+//           {account.email}
+//         </div>
+//         <button
+//           onClick={(e) => {
+//             e.stopPropagation();
+//             onViewFiles(account);
+//           }}
+//           className="p-1 rounded hover:bg-gray-200 transition-colors"
+//           title="Browse Files in This Account"
+//         >
+//           <Folder className="w-4 h-4 text-blue-500" />
+//         </button>
+//       </div>
+
+//       {/* Storage Bar */}
+//       <div className="bg-gray-200 h-2 rounded-full overflow-hidden mb-2">
+//         <motion.div
+//           initial={{ width: 0 }}
+//           animate={{ width: `${usagePercentage}%` }}
+//           transition={{ duration: 1 }}
+//           className="h-full bg-gradient-to-r from-green-400 to-green-600"
+//         />
+//       </div>
+
+//       {/* Storage Info */}
+//       <div className="flex justify-between text-xs text-gray-600">
+//         <span>{storageAvailable.toFixed(1)}GB free</span>
+//         <span>{storageTotal.toFixed(1)}GB</span>
+//       </div>
+
+//       {/* Enhanced Info */}
+//       <div className="mt-2 flex items-center justify-between text-xs">
+//         <span className="text-green-600">
+//           📦 BrontoBox Ready
+//         </span>
+//         <span className="text-gray-500">
+//           💾 {usagePercentage.toFixed(1)}% used
+//         </span>
+//       </div>
+//     </motion.div>
+//   );
+// };
 
 const Sidebar = ({ accounts, selectedAccount, onAccountSelect, onAddAccount, fileStatistics }) => {
   const [showFileManager, setShowFileManager] = useState(false);

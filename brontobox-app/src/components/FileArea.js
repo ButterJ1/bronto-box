@@ -2,7 +2,7 @@
 import React, { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion } from 'framer-motion';
-import { Upload, Download, Trash2, Info, ShieldAlert, FileText, Image, Video, Archive, Clock, HardDrive } from 'lucide-react';
+import { Upload, Download, Trash2, Info, Shield, FileText, Image, Video, Archive, Clock, HardDrive } from 'lucide-react';
 import { APIService } from '../services/APIService';
 
 const FileCard = ({ file, onDownload, onDelete, storageInfo }) => {
@@ -57,7 +57,7 @@ const FileCard = ({ file, onDownload, onDelete, storageInfo }) => {
     } else {
       return (
         <div className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-medium">
-          <ShieldAlert className="w-4 h-4 mr-0" />
+          <Shield className="w-4 h-4 mr-0" />
           {/* Encrypted */}
         </div>
       );

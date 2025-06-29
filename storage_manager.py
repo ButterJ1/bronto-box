@@ -73,13 +73,13 @@ class BrontoBoxStorageManager:
         
     def auto_scan_existing_files(self):
         """
-        🔍 AUTO-SCAN: Discover existing BrontoBox files across all accounts
+        AUTO-SCAN: Discover existing BrontoBox files across all accounts
         This fixes the "No files yet" issue by loading existing uploads
         """
         if not self.vault.is_unlocked:
             return
             
-        print("🔍 Auto-scanning for existing BrontoBox files...")
+        print("Auto-scanning for existing BrontoBox files...")
         
         try:
             available_accounts = self.get_available_accounts()
@@ -87,7 +87,7 @@ class BrontoBoxStorageManager:
             
             for account in available_accounts:
                 account_id = account['account_id']
-                print(f"📁 Scanning account: {account['email']}")
+                print(f"Scanning account: {account['email']}")
                 
                 # Get all BrontoBox chunks for this account
                 chunks = self.drive_client.list_chunks(account_id)
@@ -103,15 +103,15 @@ class BrontoBoxStorageManager:
                         if discovered_file:
                             self.stored_files[brontobox_file_id] = discovered_file
                             total_discovered += 1
-                            print(f"  ✅ Discovered: {discovered_file.original_name}")
+                            print(f"  Discovered: {discovered_file.original_name}")
             
             if total_discovered > 0:
-                print(f"🎉 Auto-discovery complete: Found {total_discovered} existing BrontoBox files!")
+                print(f"Auto-discovery complete: Found {total_discovered} existing BrontoBox files!")
             else:
-                print("📂 No existing BrontoBox files found")
+                print("No existing BrontoBox files found")
                 
         except Exception as e:
-            print(f"⚠️ Auto-scan error: {e}")
+            print(f"Auto-scan error: {e}")
     
     def _group_chunks_by_file_id(self, chunks: List[DriveFile]) -> Dict[str, List[DriveFile]]:
         """Group drive chunks by their BrontoBox file ID"""
@@ -202,7 +202,7 @@ class BrontoBoxStorageManager:
             return stored_file
             
         except Exception as e:
-            print(f"⚠️ Failed to reconstruct file {file_id}: {e}")
+            print(f"Failed to reconstruct file {file_id}: {e}")
             return None
     
     def get_available_accounts(self) -> List[Dict[str, Any]]:
@@ -223,7 +223,7 @@ class BrontoBoxStorageManager:
                             'storage_info': storage_info
                         })
                 except Exception as e:
-                    print(f"⚠️ Could not get storage info for {account['email']}: {e}")
+                    print(f"Could not get storage info for {account['email']}: {e}")
         
         # Sort by available space (most available first)
         account_info.sort(key=lambda x: x['available_gb'], reverse=True)
@@ -274,10 +274,10 @@ class BrontoBoxStorageManager:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
         
-        print(f"🦕 BrontoBox: Storing file {os.path.basename(file_path)}")
+        print(f"BrontoBox: Storing file {os.path.basename(file_path)}")
         
         # Step 1: Encrypt and chunk the file
-        print("🔒 Encrypting and chunking file...")
+        print("Encrypting and chunking file...")
         encrypted_result = self.vault.encrypt_file(file_path)
         file_manifest = encrypted_result['file_manifest']
         
@@ -285,7 +285,7 @@ class BrontoBoxStorageManager:
         file_id = f"brontobox_{secrets.token_hex(16)}"
         
         # Step 2: Upload chunks to Google Drive accounts
-        print(f"⬆️ Uploading {len(file_manifest['chunks'])} chunks to Google Drive...")
+        print(f"Uploading {len(file_manifest['chunks'])} chunks to Google Drive...")
         
         uploaded_chunks = []
         used_accounts = []
@@ -344,10 +344,10 @@ class BrontoBoxStorageManager:
                 if account_id not in used_accounts:
                     used_accounts.append(account_id)
                 
-                print(f"   ✅ Chunk {i+1}/{len(file_manifest['chunks'])} → {account_id}")
+                print(f"   Chunk {i+1}/{len(file_manifest['chunks'])} → {account_id}")
                 
             except Exception as e:
-                print(f"   ❌ Failed to upload chunk {i}: {e}")
+                print(f"   Failed to upload chunk {i}: {e}")
                 # TODO: Implement rollback - delete already uploaded chunks
                 raise e
         
@@ -373,10 +373,10 @@ class BrontoBoxStorageManager:
         # Store file record
         self.stored_files[file_id] = stored_file
         
-        print(f"✅ File stored successfully!")
-        print(f"   📁 File ID: {file_id}")
-        print(f"   📦 Chunks: {len(uploaded_chunks)} across {len(used_accounts)} accounts")
-        print(f"   💾 Total size: {file_manifest['file_size']:,} bytes")
+        print(f"File stored successfully!")
+        print(f"   File ID: {file_id}")
+        print(f"   Chunks: {len(uploaded_chunks)} across {len(used_accounts)} accounts")
+        print(f"   Total size: {file_manifest['file_size']:,} bytes")
         
         return file_id
     
@@ -395,39 +395,39 @@ class BrontoBoxStorageManager:
             raise RuntimeError("Vault must be unlocked to retrieve files")
         
         if file_id not in self.stored_files:
-            print(f"❌ File not found: {file_id}")
+            print(f"File not found: {file_id}")
             return False
         
         stored_file = self.stored_files[file_id]
-        print(f"🦕 BrontoBox: Retrieving file {stored_file.original_name}")
+        print(f"BrontoBox: Retrieving file {stored_file.original_name}")
         
         # Check file type and use appropriate retrieval method
         is_discovered = stored_file.metadata.get('discovered_from_chunks', False)
         is_imported = stored_file.metadata.get('imported_from_registry', False)
         has_manifest = 'encrypted_manifest' in stored_file.metadata
         
-        print(f"📋 File type: discovered={is_discovered}, imported={is_imported}, has_manifest={has_manifest}")
+        print(f"File type: discovered={is_discovered}, imported={is_imported}, has_manifest={has_manifest}")
         
         # Method 1: Try normal retrieval with encrypted manifest (best quality)
         if has_manifest and not is_discovered:
-            print("🔧 Using Method 1: Normal retrieval with encrypted manifest")
+            print("Using Method 1: Normal retrieval with encrypted manifest")
             return self._retrieve_with_manifest(stored_file, output_path)
         
         # Method 2: Try to reconstruct manifest from chunks (for restored files)
         elif is_imported or len(stored_file.chunks) > 0:
-            print("🔧 Using Method 2: Reconstruct from chunk metadata")
+            print("Using Method 2: Reconstruct from chunk metadata")
             return self._retrieve_from_chunk_reconstruction(stored_file, output_path)
         
         # Method 3: Fallback discovered file method
         else:
-            print("🔧 Using Method 3: Discovered file fallback")
+            print("Using Method 3: Discovered file fallback")
             return self._retrieve_discovered_file(stored_file, output_path)
     
     def _retrieve_with_manifest(self, stored_file: StoredFile, output_path: str) -> bool:
         """Method 1: Normal retrieval with encrypted manifest"""
         try:
             # Download all chunks
-            print(f"⬇️ Downloading {len(stored_file.chunks)} chunks...")
+            print(f"Downloading {len(stored_file.chunks)} chunks...")
             
             downloaded_chunks = {}
             
@@ -437,21 +437,21 @@ class BrontoBoxStorageManager:
                 drive_account = chunk_info['drive_account']
                 
                 try:
-                    print(f"   📦 Downloading chunk {chunk_index + 1}/{len(stored_file.chunks)} from {drive_account}")
+                    print(f"   Downloading chunk {chunk_index + 1}/{len(stored_file.chunks)} from {drive_account}")
                     
                     # Download encrypted chunk data
                     encrypted_chunk_data = self.drive_client.download_chunk(drive_account, drive_file_id)
                     
                     # Store encrypted chunk data for reconstruction
                     downloaded_chunks[chunk_index] = encrypted_chunk_data
-                    print(f"   ✅ Chunk {chunk_index + 1} downloaded ({len(encrypted_chunk_data)} bytes)")
+                    print(f"   Chunk {chunk_index + 1} downloaded ({len(encrypted_chunk_data)} bytes)")
                     
                 except Exception as e:
-                    print(f"❌ Failed to download chunk {chunk_index}: {e}")
+                    print(f"Failed to download chunk {chunk_index}: {e}")
                     return False
             
             # Reconstruct encrypted manifest
-            print("🔧 Reconstructing file...")
+            print("Reconstructing file...")
             
             # Get encrypted manifest from metadata
             encrypted_manifest = stored_file.metadata['encrypted_manifest']
@@ -464,7 +464,7 @@ class BrontoBoxStorageManager:
                 )
                 file_manifest = json.loads(decrypted_manifest_json.decode('utf-8'))
             except Exception as e:
-                print(f"❌ Failed to decrypt manifest: {e}")
+                print(f"Failed to decrypt manifest: {e}")
                 return False
             
             # Update manifest chunks with downloaded encrypted data
@@ -483,24 +483,24 @@ class BrontoBoxStorageManager:
             try:
                 success = self.vault.decrypt_file(encrypted_result, output_path)
             except Exception as e:
-                print(f"❌ File decryption failed: {e}")
+                print(f"File decryption failed: {e}")
                 return False
             
             if success:
-                print(f"✅ File retrieved successfully: {output_path}")
+                print(f"File retrieved successfully: {output_path}")
                 return True
             else:
-                print("❌ File decryption failed")
+                print("File decryption failed")
                 return False
                 
         except Exception as e:
-            print(f"❌ Method 1 failed: {e}")
+            print(f"Method 1 failed: {e}")
             return False
     
     def _retrieve_from_chunk_reconstruction(self, stored_file: StoredFile, output_path: str) -> bool:
         """Method 2: Reconstruct file from chunk metadata (for restored files)"""
         try:
-            print(f"🔧 Reconstructing file from {len(stored_file.chunks)} chunks...")
+            print(f"Reconstructing file from {len(stored_file.chunks)} chunks...")
             
             # Download all chunks in order
             chunk_data_list = []
@@ -510,15 +510,15 @@ class BrontoBoxStorageManager:
                 drive_account = chunk_info['drive_account']
                 
                 try:
-                    print(f"   📦 Downloading chunk {chunk_info['chunk_index'] + 1}")
+                    print(f"   Downloading chunk {chunk_info['chunk_index'] + 1}")
                     encrypted_chunk_data = self.drive_client.download_chunk(drive_account, drive_file_id)
                     chunk_data_list.append(encrypted_chunk_data)
                 except Exception as e:
-                    print(f"❌ Failed to download chunk {chunk_info['chunk_index']}: {e}")
+                    print(f"Failed to download chunk {chunk_info['chunk_index']}: {e}")
                     return False
             
             # For restored files, try direct concatenation first
-            print("🔧 Attempting direct file reconstruction...")
+            print("Attempting direct file reconstruction...")
             
             # Concatenate all chunk data
             combined_data = b''.join(chunk_data_list)
@@ -530,30 +530,30 @@ class BrontoBoxStorageManager:
                 with open(output_path, 'wb') as f:
                     f.write(combined_data)
                 
-                print(f"⚠️ File saved as concatenated chunks. May need manual processing.")
+                print(f"File saved as concatenated chunks. May need manual processing.")
                 print(f"   File saved to: {output_path}")
                 print(f"   Size: {len(combined_data)} bytes")
                 
                 # Try to detect if this looks like an encrypted BrontoBox file
                 if combined_data.startswith(b'{') or combined_data.startswith(b'PK'):
-                    print("💡 File appears to be readable - reconstruction may have worked!")
+                    print("File appears to be readable - reconstruction may have worked!")
                 
                 return True
                 
             except Exception as e:
-                print(f"❌ Failed to save reconstructed file: {e}")
+                print(f"Failed to save reconstructed file: {e}")
                 return False
                 
         except Exception as e:
-            print(f"❌ Method 2 failed: {e}")
+            print(f"Method 2 failed: {e}")
             return False
     
     def _retrieve_discovered_file(self, stored_file: StoredFile, output_path: str) -> bool:
         """
-        🔧 SPECIAL HANDLING: Retrieve files that were discovered from chunks
+        SPECIAL HANDLING: Retrieve files that were discovered from chunks
         These don't have the full encrypted manifest, so we reconstruct it
         """
-        print(f"🔍 Retrieving discovered file: {stored_file.original_name}")
+        print(f"Retrieving discovered file: {stored_file.original_name}")
         
         try:
             # Download all chunks
@@ -563,7 +563,7 @@ class BrontoBoxStorageManager:
                 drive_file_id = chunk_info['drive_file_id']
                 drive_account = chunk_info['drive_account']
                 
-                print(f"   📦 Downloading chunk {chunk_info['chunk_index'] + 1}/{len(stored_file.chunks)}")
+                print(f"   Downloading chunk {chunk_info['chunk_index'] + 1}/{len(stored_file.chunks)}")
                 
                 # Download encrypted chunk data
                 encrypted_chunk_data = self.drive_client.download_chunk(drive_account, drive_file_id)
@@ -571,7 +571,7 @@ class BrontoBoxStorageManager:
             
             # For discovered files, we concatenate the encrypted chunks and try to decrypt them directly
             # This is a simplified approach - ideally we'd reconstruct the full manifest
-            print("🔧 Attempting to reconstruct discovered file...")
+            print("Attempting to reconstruct discovered file...")
             
             # Concatenate all chunks
             combined_data = b''.join(downloaded_chunks)
@@ -581,21 +581,21 @@ class BrontoBoxStorageManager:
                 with open(output_path, 'wb') as f:
                     f.write(combined_data)
                 
-                print(f"⚠️ Discovered file saved as encrypted data. Manual decryption may be needed.")
+                print(f"Discovered file saved as encrypted data. Manual decryption may be needed.")
                 print(f"   File saved to: {output_path}")
                 return True
                 
             except Exception as e:
-                print(f"❌ Failed to save discovered file: {e}")
+                print(f"Failed to save discovered file: {e}")
                 return False
                 
         except Exception as e:
-            print(f"❌ Failed to retrieve discovered file: {e}")
+            print(f"Failed to retrieve discovered file: {e}")
             return False
     
     def list_stored_files(self) -> List[Dict[str, Any]]:
         """
-        📋 ENHANCED: List all files stored in BrontoBox (including auto-discovered ones)
+        ENHANCED: List all files stored in BrontoBox (including auto-discovered ones)
         """
         files_info = []
         
@@ -623,16 +623,16 @@ class BrontoBoxStorageManager:
     
     def get_unified_brontobox_files(self) -> List[Dict[str, Any]]:
         """
-        🎯 NEW METHOD: Get unified view of all BrontoBox files across accounts
+        NEW METHOD: Get unified view of all BrontoBox files across accounts
         This is what both "My Secure Files" and "Browse Drive Files" should show
         """
         return self.list_stored_files()
     
     def refresh_file_discovery(self):
         """
-        🔄 MANUAL REFRESH: Re-scan all accounts for new/changed BrontoBox files
+        MANUAL REFRESH: Re-scan all accounts for new/changed BrontoBox files
         """
-        print("🔄 Refreshing file discovery...")
+        print("Refreshing file discovery...")
         old_count = len(self.stored_files)
         
         # Clear discovered files and re-scan
@@ -644,7 +644,7 @@ class BrontoBoxStorageManager:
         self.auto_scan_existing_files()
         
         new_count = len(self.stored_files)
-        print(f"🔄 Refresh complete: {old_count} → {new_count} files")
+        print(f"Refresh complete: {old_count} → {new_count} files")
     
     def delete_file(self, file_id: str) -> bool:
         """
@@ -658,11 +658,11 @@ class BrontoBoxStorageManager:
             True if successful, False otherwise
         """
         if file_id not in self.stored_files:
-            print(f"❌ File not found: {file_id}")
+            print(f"File not found: {file_id}")
             return False
         
         stored_file = self.stored_files[file_id]
-        print(f"🗑️ Deleting file {stored_file.original_name} ({len(stored_file.chunks)} chunks)")
+        print(f"Deleting file {stored_file.original_name} ({len(stored_file.chunks)} chunks)")
         
         # Delete all chunks from Google Drive
         deleted_chunks = 0
@@ -675,16 +675,16 @@ class BrontoBoxStorageManager:
                 success = self.drive_client.delete_chunk(drive_account, drive_file_id)
                 if success:
                     deleted_chunks += 1
-                    print(f"   ✅ Deleted chunk {chunk_info['chunk_index']}")
+                    print(f"   Deleted chunk {chunk_info['chunk_index']}")
                 else:
-                    print(f"   ⚠️ Failed to delete chunk {chunk_info['chunk_index']}")
+                    print(f"   Failed to delete chunk {chunk_info['chunk_index']}")
             except Exception as e:
-                print(f"   ❌ Error deleting chunk {chunk_info['chunk_index']}: {e}")
+                print(f"   Error deleting chunk {chunk_info['chunk_index']}: {e}")
         
         # Remove from stored files
         del self.stored_files[file_id]
         
-        print(f"✅ File deleted: {deleted_chunks}/{len(stored_file.chunks)} chunks removed")
+        print(f"File deleted: {deleted_chunks}/{len(stored_file.chunks)} chunks removed")
         return deleted_chunks == len(stored_file.chunks)
     
     def get_storage_summary(self) -> Dict[str, Any]:
@@ -778,7 +778,7 @@ class BrontoBoxStorageManager:
                 
                 # Ensure we have encrypted_manifest for downloads
                 if 'encrypted_manifest' not in stored_file.metadata:
-                    print(f"⚠️ Warning: File {stored_file.original_name} missing encrypted_manifest")
+                    print(f"Warning: File {stored_file.original_name} missing encrypted_manifest")
                     # Try to mark it as discovered so it uses alternative retrieval
                     stored_file.metadata['discovered_from_chunks'] = True
                     stored_file.metadata['needs_alternative_retrieval'] = True
@@ -786,12 +786,12 @@ class BrontoBoxStorageManager:
                 loaded_files[file_id] = stored_file
             
             # CLEAR auto-discovered files and replace with imported ones
-            print(f"🔄 Replacing {len(self.stored_files)} auto-discovered files with {len(loaded_files)} imported files")
+            print(f"Replacing {len(self.stored_files)} auto-discovered files with {len(loaded_files)} imported files")
             self.stored_files = loaded_files
             
-            print(f"✅ Registry loaded: {len(loaded_files)} files imported with complete metadata")
+            print(f"Registry loaded: {len(loaded_files)} files imported with complete metadata")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to load file registry: {e}")
+            print(f"Failed to load file registry: {e}")
             return False

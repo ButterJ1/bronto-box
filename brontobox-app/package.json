@@ -39,19 +39,24 @@
     "electron": "electron .",
     "electron-dev": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && electron .\"",
     "clean": "rimraf build dist python-dist",
-    "build-react": "npm run build",
-    "build-python": "pyinstaller --onefile --name brontobox_api --distpath ./python-dist ../brontobox_api.py",
-    "prebuild-electron": "npm run clean && npm run build-react && npm run build-python",
-    "build-electron": "electron-builder",
+    "react-build": "react-scripts build",
+    "build-python": "pyinstaller --onefile --name brontobox_api --distpath ./python-dist --add-data \"../credentials.json;.\" --hidden-import=uvicorn.logging --hidden-import=uvicorn.loops --hidden-import=uvicorn.loops.auto --hidden-import=uvicorn.protocols --hidden-import=uvicorn.protocols.http --hidden-import=uvicorn.protocols.http.auto --hidden-import=uvicorn.protocols.websockets --hidden-import=uvicorn.protocols.websockets.auto --hidden-import=uvicorn.lifespan --hidden-import=uvicorn.lifespan.on --hidden-import=fastapi.applications --collect-submodules=uvicorn --collect-submodules=fastapi ../brontobox_api.py",
+    "electron-build": "electron-builder -c.extraMetadata.main=build/electron.js",
+    "prebuild-electron": "npm run clean && npm run react-build && npm run build-python",
+    "build-electron": "npm run electron-build",
     "build-all": "npm run prebuild-electron && npm run build-electron",
     "dist": "npm run build-all",
     "pack": "npm run prebuild-electron && electron-builder --dir",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "debug-build": "npm run prebuild-electron && electron-builder --dir --config.compression=store",
+    "test-production": "npm run prebuild-electron && electron ."
   },
   "build": {
     "appId": "com.brontobox.app",
     "productName": "BrontoBox",
     "copyright": "Copyright © 2024 BrontoBox",
+    "asar": false,
+    "extends": null,
     "directories": {
       "output": "dist",
       "buildResources": "assets"
@@ -88,9 +93,16 @@
         "filter": ["**/*"]
       },
       {
-        "from": "../../",
+        "from": "../",
         "to": "python/",
-        "filter": ["*.py", "!**/__pycache__/**/*", "!**/build/**/*", "!**/dist/**/*"]
+        "filter": [
+          "*.py",
+          "requirements.txt",
+          "!**/__pycache__/**/*",
+          "!**/build/**/*",
+          "!**/dist/**/*",
+          "!**/brontobox-app/**/*"
+        ]
       }
     ],
     "mac": {
@@ -116,7 +128,8 @@
       ],
       "icon": "public/favicon256.ico",
       "publisherName": "BrontoBox",
-      "verifyUpdateCodeSignature": false
+      "verifyUpdateCodeSignature": false,
+      "requestedExecutionLevel": "asInvoker"
     },
     "linux": {
       "target": [
@@ -139,7 +152,9 @@
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "BrontoBox"
+      "shortcutName": "BrontoBox",
+      "runAfterFinish": true,
+      "allowElevation": false
     },
     "publish": {
       "provider": "github",
